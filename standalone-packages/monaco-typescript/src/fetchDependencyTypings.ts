@@ -1,12 +1,137 @@
 /* eslint-disable no-param-reassign */
-import path from 'path';
+import * as ts from './lib/typescriptServices';
 
-self.importScripts([
-  'https://cdnjs.cloudflare.com/ajax/libs/typescript/2.7.2/typescript.min.js',
-]);
+const splitPathRe = /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/;
+
+function splitPath(filename: string) {
+  return splitPathRe.exec(filename).slice(1);
+}
+
+// resolves . and .. elements in a path array with directory names there
+// must be no slashes or device names (c:\) in the array
+// (so also no leading and trailing slashes - it does not distinguish
+// relative and absolute paths)
+function normalizeArray(parts, allowAboveRoot) {
+  const res = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    const p = parts[i];
+
+    // ignore empty parts
+    if (!p || p === '.') continue; // eslint-disable-line no-continue
+
+    if (p === '..') {
+      if (res.length && res[res.length - 1] !== '..') {
+        res.pop();
+      } else if (allowAboveRoot) {
+        res.push('..');
+      }
+    } else {
+      res.push(p);
+    }
+  }
+
+  return res;
+}
+
+export function isAbsolute(path: string) {
+  return path.charAt(0) === '/';
+}
+
+export function normalize(path: string) {
+  const isAbs = isAbsolute(path);
+  const trailingSlash = path && path[path.length - 1] === '/';
+  let newPath = path;
+
+  // Normalize the path
+  newPath = normalizeArray(newPath.split('/'), !isAbs).join('/');
+
+  if (!newPath && !isAbs) {
+    newPath = '.';
+  }
+  if (newPath && trailingSlash) {
+    newPath += '/';
+  }
+
+  return (isAbs ? '/' : '') + newPath;
+}
+
+export function join(...paths: Array<any>) {
+  let path = '';
+  for (let i = 0; i < paths.length; i += 1) {
+    const segment = paths[i];
+
+    if (typeof segment !== 'string') {
+      throw new TypeError('Arguments to path.join must be strings');
+    }
+    if (segment) {
+      if (!path) {
+        path += segment;
+      } else {
+        path += `/${segment}`;
+      }
+    }
+  }
+  return normalize(path);
+}
+
+export function dirname(path: string) {
+  const result = splitPath(path);
+  const root = result[0];
+  let dir = result[1];
+
+  if (!root && !dir) {
+    // No dirname whatsoever
+    return '.';
+  }
+
+  if (dir) {
+    // It has a dirname, strip trailing slash
+    dir = dir.substr(0, dir.length - 1);
+  }
+
+  return root + dir;
+}
+
+export function basename(p: string, ext: string = '') {
+  // Special case: Normalize will modify this to '.'
+  if (p === '') {
+    return p;
+  }
+  // Normalize the string first to remove any weirdness.
+  const path = normalize(p);
+  // Get the last part of the string.
+  const sections = path.split('/');
+  const lastPart = sections[sections.length - 1];
+  // Special case: If it's empty, then we have a string like so: foo/
+  // Meaning, 'foo' is guaranteed to be a directory.
+  if (lastPart === '' && sections.length > 1) {
+    return sections[sections.length - 2];
+  }
+  // Remove the extension, if need be.
+  if (ext.length > 0) {
+    const lastPartExt = lastPart.substr(lastPart.length - ext.length);
+    if (lastPartExt === ext) {
+      return lastPart.substr(0, lastPart.length - ext.length);
+    }
+  }
+  return lastPart;
+}
+
+export function absolute(path: string) {
+  if (path.indexOf('/') === 0) {
+    return path;
+  }
+
+  if (path.indexOf('./') === 0) {
+    return path.replace('./', '/');
+  }
+
+  return '/' + path;
+}
+
+
 
 const ROOT_URL = `https://cdn.jsdelivr.net/`;
-
 const loadedTypings = [];
 
 /**
@@ -33,7 +158,8 @@ const doFetch = url => {
         return Promise.resolve(response);
       }
 
-      const error = new Error(response.statusText || response.status);
+      const error = new Error(response.statusText || `${response.status}`);
+      // @ts-ignore
       error.response = response;
       return Promise.reject(error);
     })
@@ -43,39 +169,75 @@ const doFetch = url => {
   return promise;
 };
 
-const fetchFromDefinitelyTyped = (dependency, version, fetchedPaths) =>
-  doFetch(
-    `${ROOT_URL}npm/@types/${dependency
-      .replace('@', '')
-      .replace(/\//g, '__')}/index.d.ts`
-  ).then(typings => {
+const fetchFromDefinitelyTyped = (dependency, version, fetchedPaths) => {
+  const depUrl = `${ROOT_URL}npm/@types/${dependency
+    .replace('@', '')
+    .replace(/\//g, '__')}`;
+
+  return doFetch(`${depUrl}/package.json`).then(async typings => {
+    const rootVirtualPath = `node_modules/@types/${dependency}`
+    const referencedPath = `${rootVirtualPath}/package.json`
     addLib(
-      `node_modules/@types/${dependency}/index.d.ts`,
+      referencedPath,
       typings,
       fetchedPaths
     );
+
+    // const typeVersion = await doFetch(`${depUrl}/package.json`).then(res => {
+    //   const packagePath = `${rootVirtualPath}/package.json`;
+    //   addLib(packagePath, res, fetchedPaths);
+    //   return JSON.parse(res).version;
+    // })
+
+    // get all files in the specified directory
+    return getFileMetaData(
+      `@types/${dependency}`,
+      JSON.parse(typings).version,
+      '/'
+    ).then(fileData =>
+      getFileTypes(
+        depUrl,
+        `@types/${dependency}`,
+        '/index.d.ts',
+        fetchedPaths,
+        fileData
+      )
+    );
   });
+}
 
 const getRequireStatements = (title: string, code: string) => {
   const requires = [];
 
-  const sourceFile = self.ts.createSourceFile(
+  const sourceFile = ts.createSourceFile(
     title,
     code,
-    self.ts.ScriptTarget.Latest,
+    ts.ScriptTarget.Latest,
     true,
-    self.ts.ScriptKind.TS
+    ts.ScriptKind.TS
   );
 
-  self.ts.forEachChild(sourceFile, node => {
+  // Check the reference comments
+  sourceFile.referencedFiles.forEach(ref => {
+    requires.push(ref.fileName);
+  })
+
+  ts.forEachChild(sourceFile, node => {
     switch (node.kind) {
-      case self.ts.SyntaxKind.ImportDeclaration: {
-        requires.push(node.moduleSpecifier.text);
+
+      case ts.SyntaxKind.ImportDeclaration: {
+        // @ts-ignore
+        if (node.moduleSpecifier) {
+          // @ts-ignore
+          requires.push(node.moduleSpecifier.text);
+        }
         break;
       }
-      case self.ts.SyntaxKind.ExportDeclaration: {
+      case ts.SyntaxKind.ExportDeclaration: {
         // For syntax 'export ... from '...'''
+        // @ts-ignore
         if (node.moduleSpecifier) {
+          // @ts-ignore
           requires.push(node.moduleSpecifier.text);
         }
         break;
@@ -137,7 +299,7 @@ const getFileTypes = (
   fetchedPaths: Array<string>,
   fileMetaData
 ) => {
-  const virtualPath = path.join('node_modules', dependency, depPath);
+  const virtualPath = join('node_modules', dependency, depPath);
 
   if (fetchedPaths[virtualPath]) return null;
 
@@ -153,7 +315,7 @@ const getFileTypes = (
           // Don't add global deps
           dep => dep.startsWith('.')
         )
-        .map(relativePath => path.join(path.dirname(depPath), relativePath))
+        .map(relativePath => join(dirname(depPath), relativePath))
         .map(relativePath => resolveAppropiateFile(fileMetaData, relativePath))
         .map(nextDepPath =>
           getFileTypes(
@@ -191,13 +353,13 @@ function fetchFromMeta(dependency, version, fetchedPaths) {
         throw new Error('No inline typings found.');
       }
 
-      dtsFiles.forEach(file => {
+      return Promise.all(dtsFiles.map(file =>
         doFetch(`https://cdn.jsdelivr.net/npm/${dependency}@${version}${file}`)
           .then(dtsFile =>
             addLib(`node_modules/${dependency}${file}`, dtsFile, fetchedPaths)
           )
-          .catch(() => {});
-      });
+          .catch(() => {})
+      ));
     });
 }
 
@@ -219,7 +381,7 @@ function fetchFromTypings(dependency, version, fetchedPaths) {
         return getFileMetaData(
           dependency,
           version,
-          path.join('/', path.dirname(types))
+          join('/', dirname(types))
         ).then(fileData =>
           getFileTypes(
             depUrl,
@@ -235,7 +397,7 @@ function fetchFromTypings(dependency, version, fetchedPaths) {
     });
 }
 
-async function fetchAndAddDependencies(dependencies) {
+export async function fetchAndAddDependencies(dependencies, onDependencies) {
   const fetchedPaths = {};
 
   const depNames = Object.keys(dependencies);
@@ -263,19 +425,14 @@ async function fetchAndAddDependencies(dependencies) {
           );
         }
       } catch (e) {
-        // Don't show these cryptic messages to users, because this is not vital
-        if (process.env.NODE_ENV === 'development') {
-          console.error(`Couldn't find typings for ${dep}`, e);
-        }
+        // // Don't show these cryptic messages to users, because this is not vital
+        // if (process.env.NODE_ENV === 'development') {
+        //   console.error(`Couldn't find typings for ${dep}`, e);
+        // }
       }
     })
   );
 
-  self.postMessage(fetchedPaths);
+  onDependencies(fetchedPaths);
 }
 
-self.addEventListener('message', event => {
-  const { dependencies } = event.data;
-
-  fetchAndAddDependencies(dependencies);
-});
