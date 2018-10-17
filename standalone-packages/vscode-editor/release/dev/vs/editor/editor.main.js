@@ -7823,9 +7823,9 @@ define(__m[27/*vs/base/common/uri*/], __M([1/*require*/,0/*exports*/,11/*vs/base
             // other path
             value = uri.path;
         }
-        if (platform_1.isWindows) {
-            value = value.replace(/\//g, '\\');
-        }
+        // if (isWindows) {
+        // 	value = value.replace(/\//g, '\\');
+        // }
         return value;
     }
     /**
