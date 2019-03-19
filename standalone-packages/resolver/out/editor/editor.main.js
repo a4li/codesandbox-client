@@ -68061,8 +68061,6 @@ define(["require", "exports", "vs/base/common/async", "vs/base/common/lifecycle"
             if (!this._worker) {
                 try {
                     this._worker = this._register(new simpleWorker_1.SimpleWorkerClient(this._workerFactory, 'vs/editor/common/services/editorSimpleWorker'));
-                    // CODESANDBOX-EDIT
-                    window.BrowserFS.FileSystem.WorkerFS.attachRemoteListener(this._worker._worker.worker);
                 }
                 catch (err) {
                     simpleWorker_1.logOnceWebWorkerWarning(err);
