@@ -23,21 +23,32 @@ import { map } from 'sandbox-hooks/react-error-overlay/utils/mapper';
 
 import run from './run-circus';
 
-import type Manager from '../manager';
-import type { Module } from '../entities/module';
-import type {
-  Event,
-  TestEntry,
-  DescribeBlock,
-  TestName,
-  TestFn,
-} from './types';
+import Manager from '../manager';
+import { Module } from '../entities/module';
+import { Event, TestEntry, DescribeBlock, TestName, TestFn } from './types';
 
 expect.extend({
   toMatchSnapshot,
   toThrowErrorMatchingSnapshot,
 });
-(expect: Object).addSnapshotSerializer = addSerializer;
+expect.addSnapshotSerializer = addSerializer;
+
+function addScript(src: string) {
+  return new Promise(resolve => {
+    const s = document.createElement('script');
+    s.setAttribute('src', src);
+    document.body.appendChild(s);
+
+    s.onload = () => {
+      resolve();
+    };
+  });
+}
+
+/**
+ * Load JSDOM while the sandbox loads. Before we run a test we make sure that this has been loaded.
+ */
+const jsdomPromise = addScript('/static/js/jsdom-4.0.0.min.js');
 
 function resetTestState() {
   const ROOT_DESCRIBE_BLOCK = makeDescribe(ROOT_DESCRIBE_BLOCK_NAME);
@@ -102,12 +113,25 @@ export default class TestRunner {
       });
     };
 
+    const { JSDOM } = (window as any).JSDOM;
+    const { window: jsdomWindow } = new JSDOM('<!DOCTYPE html>', {
+      pretendToBeVisual: true,
+      url: document.location.origin,
+    });
+    const { document: jsdomDocument } = jsdomWindow;
+
+    // Date is not set correctly on window in JSDOM. This breaks Jest
+    jsdomWindow.Date = Date;
+
     return {
       ...jestTestHooks,
       expect,
       jest: jestMock,
       test,
       it,
+      document: jsdomDocument,
+      window: jsdomWindow,
+      global: jsdomWindow,
     };
   }
 
@@ -196,6 +220,8 @@ export default class TestRunner {
       return;
     }
 
+    await jsdomPromise;
+
     this.sendMessage('total_test_start');
 
     let testModule = null;
@@ -229,6 +255,8 @@ export default class TestRunner {
 
     await Promise.all(
       tests.map(async t => {
+        dispatch(actions.error.clear(t.path, 'jest'));
+
         try {
           this.manager.evaluateModule(t, {
             force: true,
@@ -252,13 +280,14 @@ export default class TestRunner {
 
   async errorToCodeSandbox(
     error: Error & {
-      matcherResult?: boolean,
+      matcherResult?: boolean;
     }
   ) {
     const parsedError = parse(error);
     const mappedErrors = await map(parsedError);
 
     return {
+      name: error.name,
       message: error.message,
       stack: error.stack,
       matcherResult: !!error.matcherResult,
@@ -267,13 +296,12 @@ export default class TestRunner {
   }
 
   getDescribeBlocks(test: TestEntry) {
-    let t: ?(TestEntry | DescribeBlock) = test;
+    let t: TestEntry | DescribeBlock | undefined = test;
     const blocks = [];
 
-    // $FlowIssue
     while (t.parent != null) {
       blocks.push(t.parent.name);
-      // $FlowIssue
+
       t = t.parent;
     }
 
@@ -302,6 +330,7 @@ export default class TestRunner {
     switch (message.name) {
       case 'test_start': {
         const test = await this.testToCodeSandbox(message.test);
+
         return this.sendMessage('test_start', {
           test,
         });
@@ -331,6 +360,7 @@ export default class TestRunner {
                   column: mappedError._originalColumnNumber,
                   path: test.path,
                   payload: {},
+                  source: 'jest',
                 })
               );
             }
