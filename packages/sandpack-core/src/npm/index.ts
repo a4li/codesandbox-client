@@ -21,7 +21,7 @@ export type NPMDependencies = {
 };
 
 const PRELOADED_PROTOCOLS = [
-  preloadedProtocols.jsdelivr,
+  // preloadedProtocols.jsdelivr,
   preloadedProtocols.unpkg,
 ];
 

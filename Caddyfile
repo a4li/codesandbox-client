@@ -22,7 +22,7 @@
 # and point it to 127.0.0.1.
 # For production, make sure your domain's A/AAAA DNS records are properly
 # pointed to this machine's public IP.
-:8080
+local.netease.com
 
 # Built files will be saved into ./www/.
 root * ./www

@@ -28,9 +28,10 @@ interface JsDelivrApiResult {
 }
 
 async function fetchAllVersions(dep: string): Promise<JsDelivrApiResult> {
-  return fetchWithRetries<JsDelivrApiResult>(
-    `https://data.jsdelivr.com/v1/package/npm/${dep}`
-  );
+  // return fetchWithRetries<JsDelivrApiResult>(
+  //   `https://data.jsdelivr.com/v1/package/npm/${dep}`
+  // );
+  throw new Error('Not implemented');
 }
 
 /** Resolves version range from unpkg, use this as a fallback when jsdelivr fails */
@@ -39,7 +40,8 @@ const resolveVersionFromUnpkg = (
   version: string
 ): Promise<string> => {
   return fetchWithRetries(
-    `https://unpkg.com/${dep}@${encodeURIComponent(version)}/package.json`
+    // `https://unpkg.com/${dep}@${encodeURIComponent(version)}/package.json`
+    `https://unpkg.example.com/${dep}@${encodeURIComponent(version)}/package.json`
   ).then(x => x.version);
 };
 

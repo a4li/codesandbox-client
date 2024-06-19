@@ -1,7 +1,7 @@
 import { CSB_PKG_PROTOCOL } from '@codesandbox/common/lib/utils/ci';
 import { CsbFetcher } from './csb';
 import { UnpkgFetcher } from './unpkg';
-import { JSDelivrNPMFetcher } from './jsdelivr/jsdelivr-npm';
+// import { JSDelivrNPMFetcher } from './jsdelivr/jsdelivr-npm';
 import { isGithubDependency, JSDelivrGHFetcher } from './jsdelivr/jsdelivr-gh';
 import { isTarDependency, TarFetcher } from './tar';
 import { GistFetcher } from './gist';
@@ -11,7 +11,7 @@ import { ProtocolTransformer } from './transformer';
 let contributedProtocols: ProtocolDefinition[] = [];
 
 export const preloadedProtocols = {
-  jsdelivr: new JSDelivrNPMFetcher(),
+  // jsdelivr: new JSDelivrNPMFetcher(),
   unpkg: new UnpkgFetcher(),
 };
 
@@ -45,9 +45,10 @@ const protocols: ProtocolDefinition[] = [
   },
   {
     protocol: preloadedProtocols.unpkg,
-    condition: (_name, _version, useFallback) => useFallback,
+    // condition: (_name, _version, useFallback) => useFallback,
+    condition: (_name, _version, useFallback) => true,
   },
-  { protocol: preloadedProtocols.jsdelivr, condition: () => true },
+  // { protocol: preloadedProtocols.jsdelivr, condition: () => true },
 ];
 
 export type ProtocolDefinition = {
