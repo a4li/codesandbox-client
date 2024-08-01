@@ -4,7 +4,7 @@ import { isUrl } from '@codesandbox/common/lib/utils/is-url';
 
 /* eslint-disable import/default */
 // @ts-ignore
-import BabelWorker from 'worker-loader?publicPath=/&name=babel-transpiler.[hash:8].worker.js!./worker/index';
+import BabelWorker from 'worker-loader?publicPath=/sandbox&name=babel-transpiler.[hash:8].worker.js!./worker/index';
 
 import delay from '@codesandbox/common/lib/utils/delay';
 import { endMeasure, measure } from '@codesandbox/common/lib/utils/metrics';

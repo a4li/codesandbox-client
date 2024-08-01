@@ -1,6 +1,6 @@
 /* eslint-disable import/default */
 // @ts-ignore
-import BabelWorker from 'worker-loader?publicPath=/&name=babel-transpiler.[hash:8].worker.js!./eval/transpilers/babel/worker/index';
+import BabelWorker from 'worker-loader?publicPath=/sandbox&name=babel-transpiler.[hash:8].worker.js!./eval/transpilers/babel/worker/index';
 /* eslint-enable import/default */
 import hookConsole from 'sandbox-hooks/console';
 import setupHistoryListeners from 'sandbox-hooks/url-listeners';

@@ -41,7 +41,7 @@ const resolveVersionFromUnpkg = (
 ): Promise<string> => {
   return fetchWithRetries(
     // `https://unpkg.com/${dep}@${encodeURIComponent(version)}/package.json`
-    `https://unpkg.example.com/${dep}@${encodeURIComponent(version)}/package.json`
+    `https://10.4.5.136/unpkg/${dep}@${encodeURIComponent(version)}/package.json`
   ).then(x => x.version);
 };
 

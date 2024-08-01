@@ -1,5 +1,5 @@
 // @ts-ignore
-import StencilWorker from 'worker-loader?publicPath=/&name=stencil-transpiler.[hash:8].worker.js!./stencil-worker.ts';
+import StencilWorker from 'worker-loader?publicPath=/sandbox&name=stencil-transpiler.[hash:8].worker.js!./stencil-worker.ts';
 import { LoaderContext } from 'sandpack-core';
 
 import WorkerTranspiler from '../worker-transpiler/transpiler';

@@ -1,6 +1,6 @@
 /* eslint-disable import/default */
 // @ts-ignore
-import PugWorker from 'worker-loader?publicPath=/&name=pug-transpiler.[hash:8].worker.js!./pug-worker';
+import PugWorker from 'worker-loader?publicPath=/sandbox&name=pug-transpiler.[hash:8].worker.js!./pug-worker';
 /* eslint-enable import/default */
 
 import { LoaderContext, TranspilerResult } from 'sandpack-core';

@@ -26,7 +26,7 @@ function normalize(files: UnpkgMetaFiles[], fileObject: Meta = {}) {
 export class UnpkgFetcher implements FetchProtocol {
   async file(name: string, version: string, path: string): Promise<string> {
     // const url = `https://unpkg.com/${name}@${version}${path}`;
-    const url = `https://unpkg.example.com/${name}@${version}${path}`;
+    const url = `https://10.4.5.136/unpkg/${name}@${version}${path}`;
     const result = await fetchWithRetries(url).then(x => x.text());
 
     return result;
@@ -34,7 +34,7 @@ export class UnpkgFetcher implements FetchProtocol {
 
   async meta(name: string, version: string): Promise<Meta> {
     // const url = `https://unpkg.com/${name}@${version}/?meta`;
-    const url = `https://unpkg.example.com/${name}@${version}/?meta`;
+    const url = `https://10.4.5.136/unpkg/${name}@${version}/?meta`;
     const result: UnpkgMetaFiles = await fetchWithRetries(url).then(x =>
       x.json()
     );

@@ -15,7 +15,7 @@ import * as React from 'react';
 import { debounce } from 'lodash-es';
 import { withTheme } from 'styled-components';
 // eslint-disable-next-line
-import LinterWorker from 'worker-loader?publicPath=/&name=monaco-linter.[hash:8].worker.js!app/overmind/effects/vscode/LinterWorker/index';
+import LinterWorker from 'worker-loader?publicPath=/sandbox&name=monaco-linter.[hash:8].worker.js!app/overmind/effects/vscode/LinterWorker/index';
 
 import FuzzySearch from '../FuzzySearch';
 import type { Editor, Props } from '../types';

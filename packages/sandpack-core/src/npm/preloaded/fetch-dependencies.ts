@@ -24,7 +24,7 @@ const PROD_URLS = {
   packager:
     'https://aiwi8rnkp5.execute-api.eu-west-1.amazonaws.com/prod/packages',
   // bucket: 'https://prod-packager-packages.codesandbox.io',
-  bucket: 'https://packager.example.com',
+  bucket: 'https://10.4.5.136/packager',
 };
 
 const URLS = PROD_URLS;

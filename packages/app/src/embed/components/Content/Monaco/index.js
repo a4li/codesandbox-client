@@ -23,8 +23,8 @@ import { TextOperation } from 'ot';
 import * as React from 'react';
 import { withTheme } from 'styled-components';
 /* eslint-disable import/no-webpack-loader-syntax, import/default */
-import LinterWorker from 'worker-loader?publicPath=/&name=monaco-linter.[hash:8].worker.js!app/overmind/effects/vscode/LinterWorker';
-import TypingsFetcherWorker from 'worker-loader?publicPath=/&name=monaco-typings-ata.[hash:8].worker.js!./workers/fetch-dependency-typings';
+import LinterWorker from 'worker-loader?publicPath=/sandbox&name=monaco-linter.[hash:8].worker.js!app/overmind/effects/vscode/LinterWorker';
+import TypingsFetcherWorker from 'worker-loader?publicPath=/sandbox&name=monaco-typings-ata.[hash:8].worker.js!./workers/fetch-dependency-typings';
 
 import defineTheme from './define-theme';
 import { CodeContainer, Container } from './elements';

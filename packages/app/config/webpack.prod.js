@@ -140,7 +140,7 @@ module.exports = merge(commonConfig, {
         // },
         {
           // urlPattern: /^https:\/\/unpkg\.com/,
-          urlPattern: /^https:\/\/unpkg\.example.com/,
+          urlPattern: /^https:\/\/10\.4\.5\.136\/unpkg/,
           handler: 'cacheFirst',
           options: {
             cache: {
@@ -274,7 +274,7 @@ module.exports = merge(commonConfig, {
         },
         {
           // urlPattern: /prod-packager-packages\.codesandbox\.io/,
-          urlPattern: /packager\.example\.com:9445/,
+          urlPattern: /^https:\/\/10\.4\.5\.136\/packager/,
           handler: 'cacheFirst',
           options: {
             cache: {
@@ -288,7 +288,7 @@ module.exports = merge(commonConfig, {
         // We resolve `package.json` to resolve versions (e.g. next -> 15.0.5). We need to have a much shorter cache on this
         {
           // urlPattern: /^https:\/\/unpkg\.com\/.*\/package.json/,
-          urlPattern: /^https:\/\/unpkg\.example\.com\/.*\/package.json/,
+          urlPattern: /^https:\/\/10\.4\.5\.136\/unpkg\/.*\/package.json/,
           handler: 'networkFirst',
           options: {
             cache: {
@@ -301,7 +301,7 @@ module.exports = merge(commonConfig, {
         },
         {
           // urlPattern: /^https:\/\/unpkg\.com/,
-          urlPattern: /^https:\/\/unpkg\.example\.com/,
+          urlPattern: /^https:\/\/10\.4\.5\.136\/unpkg/,
           handler: 'cacheFirst',
           options: {
             cache: {

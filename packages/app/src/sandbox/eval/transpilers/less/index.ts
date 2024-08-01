@@ -1,6 +1,6 @@
 /* eslint-disable import/default */
 // @ts-ignore
-import LessWorker from 'worker-loader?publicPath=/&name=less-transpiler.[hash:8].worker.js!./less-worker';
+import LessWorker from 'worker-loader?publicPath=/sandbox&name=less-transpiler.[hash:8].worker.js!./less-worker';
 /* eslint-enable import/default */
 
 import { LoaderContext, TranspilerResult } from 'sandpack-core';

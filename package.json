@@ -35,7 +35,7 @@
     ]
   },
   "scripts": {
-    "build": "cross-env NODE_OPTIONS=\"--max-old-space-size=4096\" yarn build:deps && yarn build:prod",
+    "build": "cross-env NODE_OPTIONS=\"--max-old-space-size=4096\" yarn build:clean && yarn build:deps && yarn build:sandpack",
     "build:clean": "lerna run build:clean --scope app && rimraf www",
     "build:common": "lerna run build:dev --scope @codesandbox/common --stream",
     "build:components": "lerna run build:dev --scope @codesandbox/components --stream",

@@ -1,6 +1,6 @@
 /* eslint-disable import/default */
 // @ts-ignore
-import TypeScriptWorker from 'worker-loader?publicPath=/&name=typescript-transpiler.[hash:8].worker.js!./typescript-worker';
+import TypeScriptWorker from 'worker-loader?publicPath=/sandbox&name=typescript-transpiler.[hash:8].worker.js!./typescript-worker';
 /* eslint-enable import/default */
 import { getDependenciesFromConfig } from 'sandbox/eval/utils/get-dependencies';
 import { LoaderContext, TranspilerResult } from 'sandpack-core';

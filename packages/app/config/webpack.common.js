@@ -23,7 +23,7 @@ const __PROD__ = NODE_ENV === 'production'; // eslint-disable-line no-underscore
 const __PROFILING__ = Boolean(process.env.PROFILING); // eslint-disable-line no-underscore-dangle
 // const __TEST__ = NODE_ENV === 'test'; // eslint-disable-line no-underscore-dangle
 const babelConfig = __DEV__ ? babelDev : babelProd;
-const publicPath = SANDBOX_ONLY || __DEV__ ? '/' : getHost.default() + '/';
+const publicPath = SANDBOX_ONLY || __DEV__ ? '/sandbox/' : getHost.default() + '/';
 const isLint = 'LINT' in process.env;
 
 // common function to get style loaders

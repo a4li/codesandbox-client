@@ -1,7 +1,7 @@
 import { LoaderContext, TranspilerResult } from 'sandpack-core';
 
 // @ts-ignore
-import HTMLWorker from 'worker-loader?publicPath=/&name=parcel-html-transpiler.[hash:8].worker.js!./html-worker';
+import HTMLWorker from 'worker-loader?publicPath=/sandbox&name=parcel-html-transpiler.[hash:8].worker.js!./html-worker';
 import WorkerTranspiler from '../../../transpilers/worker-transpiler/transpiler';
 
 class HTMLTranspiler extends WorkerTranspiler {

@@ -9,6 +9,7 @@ const dotGit = /(\.git)$/;
 const sandboxHost = {
   'https://codesandbox.io': 'https://csb.app',
   'https://codesandbox.stream': 'https://codesandbox.dev',
+  '/sandbox': 'https://10.4.5.136',
 };
 
 export const CSBProjectGitHubRepository = ({

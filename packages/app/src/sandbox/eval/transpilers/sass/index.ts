@@ -1,5 +1,5 @@
 // @ts-ignore
-import SassWorker from 'worker-loader?publicPath=/&name=sass-transpiler.[hash:8].worker.js!./worker';
+import SassWorker from 'worker-loader?publicPath=/sandbox&name=sass-transpiler.[hash:8].worker.js!./worker';
 
 import { LoaderContext, TranspilerResult } from 'sandpack-core';
 import WorkerTranspiler from '../worker-transpiler/transpiler';

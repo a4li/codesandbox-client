@@ -2,6 +2,7 @@ import loadPolyfills from '@codesandbox/common/lib/load-dynamic-polyfills';
 
 require('app/config/polyfills');
 
+
 self.importScripts(
   `${process.env.CODESANDBOX_HOST}/static/browserfs12/browserfs.min.js`
 );

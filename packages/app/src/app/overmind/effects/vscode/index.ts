@@ -187,14 +187,14 @@ export class VSCodeEffect {
 
     import(
       // @ts-ignore
-      'worker-loader?publicPath=/&name=client-ext-host-worker.[hash:8].worker.js!./extensionHostWorker/bootstrappers/client-ext-host'
+      'worker-loader?publicPath=/sandbox&name=client-ext-host-worker.[hash:8].worker.js!./extensionHostWorker/bootstrappers/client-ext-host'
     ).then(ExtHostWorkerLoader => {
       this.clientExtensionHost = ExtHostWorkerLoader.default;
     });
 
     import(
       // @ts-ignore
-      'worker-loader?publicPath=/&name=container-ext-host-worker.[hash:8].worker.js!./extensionHostWorker/bootstrappers/container-ext-host'
+      'worker-loader?publicPath=/sandbox&name=container-ext-host-worker.[hash:8].worker.js!./extensionHostWorker/bootstrappers/container-ext-host'
     ).then(ExtHostWorkerLoader => {
       this.containerExtensionHost = ExtHostWorkerLoader.default;
     });

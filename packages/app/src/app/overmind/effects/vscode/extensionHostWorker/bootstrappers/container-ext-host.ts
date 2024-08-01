@@ -1,10 +1,10 @@
 import * as childProcess from 'node-services/lib/child_process';
 // @ts-ignore
-import DefaultWorkLoader from 'worker-loader?publicPath=/&name=dynamic-worker.[hash:8].worker.js!./generic-1';
+import DefaultWorkLoader from 'worker-loader?publicPath=/sandbox&name=dynamic-worker.[hash:8].worker.js!./generic-1';
 // @ts-ignore
-import SvelteWorker from 'worker-loader?publicPath=/&name=svelte-worker.[hash:8].worker.js!./svelte-worker';
+import SvelteWorker from 'worker-loader?publicPath=/sandbox&name=svelte-worker.[hash:8].worker.js!./svelte-worker';
 // @ts-ignore
-import VueWorker from 'worker-loader?publicPath=/&name=vue-worker.[hash:8].worker.js!./vue-worker';
+import VueWorker from 'worker-loader?publicPath=/sandbox&name=vue-worker.[hash:8].worker.js!./vue-worker';
 
 import { initializeAll } from '../common/global';
 import { WebsocketLSP } from '../services/WebsocketLSP';
