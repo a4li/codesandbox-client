@@ -10,6 +10,7 @@ class PugTranspiler extends WorkerTranspiler {
   worker: Worker;
 
   constructor() {
+    // 优化：使用 1 个 Worker 避免重复加载
     super('pug-loader', PugWorker, {
       maxWorkerCount: 1,
     });

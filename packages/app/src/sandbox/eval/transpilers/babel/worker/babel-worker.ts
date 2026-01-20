@@ -27,7 +27,7 @@ import {
   normalizePresetName,
 } from './utils/normalize-name';
 
-import { evaluateFromPath, resetCache } from './evaluate';
+import { evaluateFromPath, resetCache as resetEvalCache } from './evaluate';
 import {
   getPrefixedPluginName,
   getPrefixedPresetName,
@@ -35,8 +35,16 @@ import {
 import { patchedResolve } from './utils/resolvePatch';
 import { loadBabelTypes } from './utils/babelTypes';
 import { ChildHandler } from '../../worker-transpiler/child-handler';
+import compilationCache from './compilation-cache';
+import hashsum from 'hash-sum';
 
 declare const Babel: IBabel;
+
+// 🚀 优化: 统一缓存清理函数
+function resetCache() {
+  resetEvalCache(); // 清理 evaluate.ts 中的缓存
+  compilationCache.clear(); // 清理编译结果缓存
+}
 
 let fsInitialized = false;
 let fsLoading = false;
@@ -512,6 +520,84 @@ async function compile(opts: any) {
     config.presets = config.presets.filter(filterRefreshPlugins);
   }
 
+  // 🚀 优化: 检查编译缓存
+  const cacheKey = compilationCache.generateKey(code, config, path);
+  const cachedResult = compilationCache.get(cacheKey);
+  
+  if (cachedResult) {
+    // 🔧 关键: 还原编译结果中的动态 ID
+    // 低代码平台会为每个组件生成动态 tid,需要从源代码提取并替换到缓存结果中
+    let restoredCode = cachedResult.code;
+    
+    // 提取源代码中所有的动态 ID (支持所有组件类型)
+    // 匹配模式: 组件名(字母) + 十六进制ID(4位以上)
+    const sourceIdRegex = /data-dnd="([^"]*:)([a-zA-Z]+)([a-f0-9]{4,})"/gi;
+    const cachedIdRegex = /"data-dnd":\s*"([^"]*:)([a-zA-Z]+)([a-f0-9]{4,})"/gi;
+    
+    // 同时提取 tid 属性
+    const sourceTidRegex = /tid="([a-zA-Z]+)([a-f0-9]{4,})"/gi;
+    const cachedTidRegex = /"tid":\s*"([a-zA-Z]+)([a-f0-9]{4,})"/gi;
+    
+    const sourceIdMatches: RegExpExecArray[] = [];
+    const cachedIdMatches: RegExpExecArray[] = [];
+    const sourceTidMatches: RegExpExecArray[] = [];
+    const cachedTidMatches: RegExpExecArray[] = [];
+    
+    let match;
+    while ((match = sourceIdRegex.exec(code)) !== null) {
+      sourceIdMatches.push(match);
+    }
+    while ((match = cachedIdRegex.exec(restoredCode)) !== null) {
+      cachedIdMatches.push(match);
+    }
+    while ((match = sourceTidRegex.exec(code)) !== null) {
+      sourceTidMatches.push(match);
+    }
+    while ((match = cachedTidRegex.exec(restoredCode)) !== null) {
+      cachedTidMatches.push(match);
+    }
+    
+    // 按位置一一对应替换动态 ID (data-dnd)
+    if (sourceIdMatches.length === cachedIdMatches.length && sourceIdMatches.length > 0) {
+      sourceIdMatches.forEach((sourceMatch, index) => {
+        const cachedMatch = cachedIdMatches[index];
+        const sourceId = sourceMatch[3];      // 源代码中的新 ID (十六进制部分)
+        const cachedId = cachedMatch[3];      // 缓存中的旧 ID
+        const componentName = sourceMatch[2]; // 组件名 (Page/Block/FFormPlaceholder等)
+        const pathPrefix = sourceMatch[1];    // 路径前缀 ("/src/pages/Home.js:")
+        
+        if (sourceId !== cachedId) {
+          // 构建精确的替换模式,避免误替换
+          const oldPattern = `"${cachedMatch[1]}${componentName}${cachedId}"`;
+          const newPattern = `"${pathPrefix}${componentName}${sourceId}"`;
+          restoredCode = restoredCode.replace(oldPattern, newPattern);
+        }
+      });
+    }
+    
+    // 按位置一一对应替换 tid 属性
+    if (sourceTidMatches.length === cachedTidMatches.length && sourceTidMatches.length > 0) {
+      sourceTidMatches.forEach((sourceMatch, index) => {
+        const cachedMatch = cachedTidMatches[index];
+        const sourceId = sourceMatch[2];      // 源代码中的新 ID (十六进制部分)
+        const cachedId = cachedMatch[2];      // 缓存中的旧 ID
+        const componentName = sourceMatch[1]; // 组件名
+        
+        if (sourceId !== cachedId) {
+          // 构建精确的替换模式
+          const oldPattern = `"tid":"${componentName}${cachedId}"`;
+          const newPattern = `"tid":"${componentName}${sourceId}"`;
+          restoredCode = restoredCode.replace(oldPattern, newPattern);
+        }
+      });
+    }
+    
+    return {
+      code: restoredCode,
+      dependencies: cachedResult.dependencies,
+    };
+  }
+
   try {
     let result;
     try {
@@ -554,6 +640,9 @@ async function compile(opts: any) {
         type: 'direct',
       });
     }
+
+    // 🚀 优化: 将编译结果存入缓存
+    compilationCache.set(cacheKey, result.code, dependencies);
 
     return {
       code: result.code,
@@ -806,6 +895,42 @@ async function workerCompile(opts) {
 
 childHandler.registerFunction('get-babel-context', getBabelContext);
 childHandler.registerFunction('compile', workerCompile);
+
+// 🚀 优化: 注册缓存管理函数
+childHandler.registerFunction('clear-compilation-cache', async () => {
+  compilationCache.clear();
+  return { success: true };
+});
+
+childHandler.registerFunction('get-cache-stats', async () => {
+  return compilationCache.getStats();
+});
+
+childHandler.registerFunction('print-cache-stats', async () => {
+  compilationCache.printStats();
+  return compilationCache.getStats();
+});
+
+// 🚀 优化: 导出缓存数据供主线程持久化
+childHandler.registerFunction('export-cache', async () => {
+  const entries = compilationCache.exportCache();
+  return {
+    entries,
+    timestamp: Date.now(),
+  };
+});
+
+// 🚀 优化: 从主线程导入缓存数据
+childHandler.registerFunction('import-cache', async (opts) => {
+  const { entries } = opts;
+  if (!entries || !Array.isArray(entries)) {
+    return { success: false, error: 'Invalid cache data' };
+  }
+  
+  const imported = compilationCache.importCache(entries);
+  return { success: true, imported };
+});
+
 childHandler.emitReady();
 
 async function executeWarmupSequence() {
@@ -821,8 +946,9 @@ async function executeWarmupSequence() {
   Babel.transform(code, normalizeV7Config(customConfig));
 }
 
-// Warmup the worker...
-executeWarmupSequence().catch(console.error);
+// 优化：禁用 Warmup 以加速 Worker 初始化（可节省约 1 秒）
+// Warmup 会预编译测试代码来初始化 Babel，但这在实际使用前是不必要的
+// executeWarmupSequence().catch(console.error);
 
 export type IBabel = {
   transform: (

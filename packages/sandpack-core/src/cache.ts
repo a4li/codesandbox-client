@@ -93,6 +93,11 @@ export async function saveCache(
       return Promise.resolve(false);
     }
 
+    // 🔧 私有部署环境下跳过 API 缓存保存
+    if (process.env.SANDPACK || !host) {
+      return Promise.resolve(false);
+    }
+
     debug(
       'Saving cache of ' +
         (stringifiedManagerState.length / 1024).toFixed(2) +
@@ -189,7 +194,10 @@ export function ignoreNextCache() {
 // 通过 localforage 从浏览器数据存储中（indexDB/localStorage 等）读取上次构建应用的编译结果，
 // 从而减少二次构建时间
 export async function consumeCache(manager: Manager) {
+  console.log('[consumeCache] manager.id:', manager.id);
+  
   if (!manager.id) {
+    console.log('[consumeCache] ❌ No manager.id, returning false');
     return false;
   }
 
@@ -199,7 +207,7 @@ export async function consumeCache(manager: Manager) {
       localStorage.getItem('ignoreCacheDev');
     if (shouldIgnoreCache) {
       localStorage.removeItem('ignoreCache');
-
+      console.log('[consumeCache] ❌ ignoreCache flag set, returning false');
       return false;
     }
 
@@ -207,6 +215,12 @@ export async function consumeCache(manager: Manager) {
     const localData: ManagerCache | undefined = await localforage.getItem(
       manager.id || ''
     );
+
+    console.log('[consumeCache] cacheData from __SANDBOX_DATA__:', !!cacheData);
+    console.log('[consumeCache] localData from IndexedDB:', !!localData);
+    if (localData) {
+      console.log('[consumeCache] localData.version:', localData.version, 'manager.version:', manager.version);
+    }
 
     const cache = findCacheToUse(cacheData && cacheData.data, localData);
     if (cache) {
@@ -221,11 +235,16 @@ export async function consumeCache(manager: Manager) {
           `Loading cache from ${cache === localData ? 'IndexedDB' : 'API'}`,
           cache
         );
+        console.log('[consumeCache] ✅ Cache version matched, loading from', cache === localData ? 'IndexedDB' : 'API');
 
         await manager.load(cache);
 
         return true;
+      } else {
+        console.log('[consumeCache] ❌ Version mismatch: cache.version=', cache.version, 'manager.version=', manager.version);
       }
+    } else {
+      console.log('[consumeCache] ❌ No cache found');
     }
 
     return false;

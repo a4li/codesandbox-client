@@ -72,4 +72,13 @@ export default class HMR {
   setInvalidated(invalidated: boolean) {
     this.invalidated = invalidated;
   }
+
+  /**
+   * 清理所有引用，防止内存泄漏
+   */
+  dispose() {
+    this.callback = undefined;
+    this.disposeHandler = undefined;
+    this.data = {};
+  }
 }

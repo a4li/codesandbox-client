@@ -120,8 +120,8 @@ export default class UNPKGRequest extends BaseFileSystem implements FileSystem {
    * Construct an HTTPRequest file system backend with the given options.
    */
   public static Create(opts: UNPKGRequestOptions, cb: BFSCallback<UNPKGRequest>): void {
-    // const URL = `https://unpkg.com/${opts.dependency}@${opts.version}`;
-    const URL = `https://unpkg.example.com/${opts.dependency}@${opts.version}`;
+    // Internal unpkg service for intranet deployment
+    const URL = `https://10.4.5.136/unpkg/${opts.dependency}@${opts.version}`;
 
     asyncDownloadFile(`${URL}/?meta`, "json", (e, data: UNPKGMeta) => {
       if (e) {
@@ -414,8 +414,8 @@ export default class UNPKGRequest extends BaseFileSystem implements FileSystem {
     if (filePath.charAt(0) === '/') {
       filePath = filePath.slice(1);
     }
-    // return `https://unpkg.com/${this.dependency}@${this.version}/${filePath}`;
-    return `https://unpkg.example.com/${this.dependency}@${this.version}/${filePath}`;
+    // Internal unpkg service for intranet deployment
+    return `https://10.4.5.136/unpkg/${this.dependency}@${this.version}/${filePath}`;
   }
 
   /**

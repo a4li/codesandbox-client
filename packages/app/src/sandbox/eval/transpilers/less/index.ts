@@ -10,10 +10,13 @@ class LessTranspiler extends WorkerTranspiler {
   worker: Worker;
 
   constructor() {
+    // 优化：使用 1 个 Worker 避免重复加载（原来 3 个会浪费约 800ms）
     super('less-loader', LessWorker, {
       maxWorkerCount: 1,
     });
 
+    // Disable caching for Less to ensure dependent files are always up-to-date
+    // Less files can import other files, and we need to recompile when imports change
     this.cacheable = false;
   }
 

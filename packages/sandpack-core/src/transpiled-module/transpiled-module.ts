@@ -183,6 +183,11 @@ export class TranspiledModule {
   hasMissingDependencies: boolean = false;
 
   /**
+   * 标记模块是否已被清理，用于防止异步回调在模块清理后继续操作导致内存泄漏
+   */
+  private _disposed: boolean = false;
+
+  /**
    * Create a new TranspiledModule, a transpiled module is a module that contains
    * all info for transpilation and compilation. Note that there can be multiple
    * transpiled modules for 1 module, since a same module can have different loaders
@@ -212,9 +217,15 @@ export class TranspiledModule {
   }
 
   dispose(manager: Manager) {
+    // 🔧 设置 disposed 标志，防止异步回调在模块清理后继续操作
+    this._disposed = true;
+
     if (this.hmrConfig) {
       // If this is a hot module we fully reload the application, same as Webpack v2.
       manager.markHardReload();
+      // 🔧 清理 HMR 配置，防止内存泄漏
+      this.hmrConfig.dispose();
+      this.hmrConfig = null;
     }
 
     this.reset();
@@ -251,6 +262,9 @@ export class TranspiledModule {
   }
 
   resetTranspilation() {
+    // 🔧 设置 disposed 标志，让正在进行的异步操作知道模块已被重置
+    this._disposed = true;
+
     Array.from(this.transpilationInitiators)
       .filter(t => t.source)
       .forEach(dep => {
@@ -330,7 +344,15 @@ export class TranspiledModule {
     // 被 externals 的依赖直接跳过编译，
     // 即在编译某个模块过程中添加该模块的依赖时，将被 externals 的依赖排除掉，
     // 阻断进一步对该依赖的编译
-    const { externals } = manager.configurations.sandbox?.parsed;
+    
+    // 优先检查 manifest.externals
+    const manifestExternals = manager.manifest.externals || {};
+    if (manifestExternals[depPath]) {
+      return;
+    }
+    
+    // 其次检查 sandbox.config.json 中的 externals
+    const { externals } = manager.configurations.sandbox?.parsed || {};
     if (externals && externals[depPath]) {
       return;
     }
@@ -377,6 +399,12 @@ export class TranspiledModule {
                   undefined
                 );
 
+                // 🔧 检查模块是否已被清理，防止在清理后继续操作导致内存泄漏
+                if (this._disposed) {
+                  resolve(tModule);
+                  return;
+                }
+
                 if (isTranspilationDep) {
                   this.transpilationDependencies.add(tModule);
                   tModule.transpilationInitiators.add(this);
@@ -390,6 +418,11 @@ export class TranspiledModule {
                 }
                 resolve(tModule);
               } catch (err) {
+                // 🔧 即使出错也要检查 disposed 状态
+                if (this._disposed) {
+                  return;
+                }
+
                 if (process.env.NODE_ENV === 'development') {
                   console.error(
                     'Problem while trying to fetch file from custom fileResolver'
@@ -417,9 +450,22 @@ export class TranspiledModule {
   }
 
   update(module: Module): TranspiledModule {
-    if (this.module.path !== module.path || this.module.code !== module.code) {
+    // 智能依赖追踪优化：比较内容 hash 而非原始代码
+    // 这样可以忽略空格、注释等无意义的变更
+    const oldHash = hashsum(this.module.code || '');
+    const newHash = hashsum(module.code || '');
+    const pathChanged = this.module.path !== module.path;
+    const contentChanged = oldHash !== newHash;
+
+    if (pathChanged || contentChanged) {
       this.module = module;
       this.resetTranspilation();
+      
+      if (contentChanged) {
+        debug(`[Smart Cache] Module ${module.path} content changed, invalidating cache`);
+      }
+    } else {
+      debug(`[Smart Cache] Module ${module.path} unchanged, reusing cache`);
     }
 
     return this;
@@ -566,6 +612,8 @@ export class TranspiledModule {
    * @param {*} manager
    */
   private async _transpile(manager: Manager): Promise<TranspiledModule> {
+    // 🔧 重置 disposed 标志，因为模块正在被重新编译
+    this._disposed = false;
     this.hasMissingDependencies = false;
 
     // Remove this module from the initiators of old deps, so we can populate a
@@ -581,6 +629,7 @@ export class TranspiledModule {
     });
     this.dependencies.clear();
     this.transpilationDependencies.clear();
+    this.asyncDependencies = []; // 清理异步依赖数组，防止内存泄漏
     this.childModules.length = 0;
     this.errors = [];
     this.warnings = [];
@@ -690,6 +739,11 @@ export class TranspiledModule {
         try {
           const tModule = await p;
 
+          // 🔧 检查模块是否已被清理，防止在清理后继续操作导致内存泄漏
+          if (this._disposed) {
+            return;
+          }
+
           this.dependencies.add(tModule);
           tModule.initiators.add(this);
         } catch (e) {
@@ -700,12 +754,14 @@ export class TranspiledModule {
 
     this.asyncDependencies = [];
 
-    await Promise.all([
+    // 等待所有依赖编译完成
+    const dependencyTranspilePromises = Promise.all([
       ...Array.from(this.transpilationInitiators).map(t =>
         t.transpile(manager)
       ),
       ...Array.from(this.dependencies).map(t => t.transpile(manager)),
     ]);
+    await dependencyTranspilePromises;
 
     return this;
   }
@@ -789,6 +845,7 @@ export class TranspiledModule {
     }
 
     if (this.compilation.globals === globals) {
+      debug(`[Smart Cache] Reusing compiled ${this.getId()}`);
       return true;
     }
 
@@ -820,6 +877,19 @@ export class TranspiledModule {
         this.module.path.startsWith('/node_modules') &&
         !this.module.path.endsWith('.vue')
       ) {
+        // 🔧 修复: 检测是否包含 ES6 模块语法
+        // 如果是，不能直接使用原始代码，需要清除缓存并报错让系统重新编译
+        // 原问题: 直接使用原始代码导致 "Unexpected token 'export'" 错误
+        const hasESMSyntax = /\bexport\s+(default|{|\*|const|let|var|function|class|async)\b/.test(this.module.code) ||
+                            /\bimport\s+(\{|\*|"|'|[a-zA-Z_$])/.test(this.module.code);
+        
+        if (hasESMSyntax) {
+          // 清除缓存并抛出错误，让系统重新编译整个项目
+          console.warn(`[Evaluate] Module needs transpilation (ESM detected): ${this.module.path}`);
+          manager.clearCache();
+          throw new Error(`${this.module.path} contains ES6 module syntax and needs transpilation. Cache cleared, please reload.`);
+        }
+        
         if (process.env.NODE_ENV === 'development') {
           console.warn(
             `[WARN] Sandpack: loading an untranspiled module: ${this.module.path}`
@@ -990,8 +1060,17 @@ export class TranspiledModule {
         const usedPath = manager.getPresetAliasedPath(path);
         const bfsModule = BrowserFS.BFSRequire(usedPath);
 
-        // 如果是被 externals 的依赖，直接从 window 对象获取返回即可
-        const { externals } = manager.configurations.sandbox?.parsed;
+        // 优先检查 manifest.externals，将 React 等库映射到全局变量避免重复加载
+        const manifestExternals = manager.manifest.externals || {};
+        if (manifestExternals[path]) {
+          const globalName = manifestExternals[path];
+          if ((window as any)[globalName]) {
+            return (window as any)[globalName];
+          }
+        }
+        
+        // 其次检查 sandbox.config.json 中的 externals 配置
+        const { externals } = manager.configurations.sandbox?.parsed || {};
         if (externals && externals[path] && window[externals[path]]) {
           return window[externals[path]];
         }
@@ -1171,10 +1250,21 @@ export class TranspiledModule {
     };
 
     const isNpmDependency = this.module.path.startsWith('/node_modules/');
-    const canOptimizeSize = sourceEqualsCompiled && optimizeForSize;
+    
+    // 🔧 修复: 对于 CSS/SCSS/LESS 等样式文件，不能使用 sourceEqualsCompiled 优化
+    // 因为这些文件需要被转换为 JavaScript 才能执行
+    const isStyleFile = /\.(css|scss|sass|less|styl)$/.test(this.module.path);
+    const canOptimizeSize = sourceEqualsCompiled && optimizeForSize && !isStyleFile;
+    
     // Don't cache source if it didn't change, also don't cache changed source from npm
     // dependencies as we can compile those really quickly.
-    const shouldCacheTranspiledSource = !canOptimizeSize && !isNpmDependency;
+    // 🔧 修复: 
+    // 1. 样式文件必须保存编译结果，即使是 npm 依赖中的
+    // 2. 如果 sourceEqualsCompiled=false（代码被转换过），npm 依赖也必须保存编译结果
+    //    否则恢复缓存时会错误地使用原始 ES6 代码导致 "Unexpected token 'export'" 错误
+    const isTransformedNpmDep = isNpmDependency && !sourceEqualsCompiled;
+    const shouldCacheTranspiledSource = !canOptimizeSize && (!isNpmDependency || isStyleFile || isTransformedNpmDep);
+    
     if (shouldCacheTranspiledSource) {
       // source can be null if module is not transpiled, i.e. included in other transpiled module (for example .scss files)
       serializableObject.source = this.source || null;

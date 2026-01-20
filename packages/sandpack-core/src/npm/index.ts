@@ -20,6 +20,14 @@ export type NPMDependencies = {
   [dependency: string]: string;
 };
 
+// 导出预加载功能
+export {
+  preloadCommonDependencies,
+  isDependencyPreloaded,
+  getPreloadStatus,
+  COMMON_LOWCODE_DEPENDENCIES,
+} from './preload-dependencies';
+
 const PRELOADED_PROTOCOLS = [
   // preloadedProtocols.jsdelivr,
   preloadedProtocols.unpkg,

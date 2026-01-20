@@ -36,5 +36,31 @@ header {
   Origin-Agent-Cluster ?0
 }
 
+# Reverse proxy for unpkg CDN
+handle_path /unpkg/* {
+  reverse_proxy https://unpkg.com {
+    header_up Host {upstream_hostport}
+    header_up X-Forwarded-Host {host}
+  }
+}
+
+# Reverse proxy for packager service
+handle_path /packager2/* {
+  # You can replace this with your own packager service URL
+  # For now, using the official CodeSandbox packager
+  reverse_proxy https://prod-packager-packages.codesandbox.io {
+    header_up Host {upstream_hostport}
+    header_up X-Forwarded-Host {host}
+  }
+}
+
+# Reverse proxy for static CDN resources (like Google Fonts)
+handle_path /static/cdn/* {
+  uri strip_prefix /static/cdn
+  reverse_proxy https://fonts.googleapis.com {
+    header_up Host {upstream_hostport}
+  }
+}
+
 # Handle URL with search query.
 try_files {path} {path}/ /index.html?{query}

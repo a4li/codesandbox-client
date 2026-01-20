@@ -12,7 +12,10 @@ class StylusTranspiler extends WorkerTranspiler {
   worker: Worker;
 
   constructor() {
-    super('stylus-loader', StylusWorker, { maxWorkerCount: 1 });
+    // 优化：使用 1 个 Worker 避免重复加载
+    super('stylus-loader', StylusWorker, { 
+      maxWorkerCount: 1
+    });
 
     this.cacheable = false;
   }

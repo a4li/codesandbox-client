@@ -21,15 +21,15 @@ const DEV_URLS = {
 };
 // eslint-disable-next-line
 const PROD_URLS = {
-  packager:
-    'https://aiwi8rnkp5.execute-api.eu-west-1.amazonaws.com/prod/packages',
   // bucket: 'https://prod-packager-packages.codesandbox.io',
-  bucket: 'https://10.4.5.136/packager',
+  bucket: 'https://10.4.5.136/packager2',
 };
 
 const URLS = PROD_URLS;
 const BUCKET_URL = URLS.bucket;
-const PACKAGER_URL = URLS.packager;
+
+// 私有化部署模式：禁用 AWS packager 服务
+const PRIVATE_DEPLOYMENT = true;
 
 function callApi(url: string, method = 'GET') {
   return fetch(url, {
@@ -138,11 +138,19 @@ export async function getDependency(
   try {
     const bucketManifest = await callApi(fullUrl);
     return bucketManifest;
-  } catch (e) {
+  } catch (e: any) {
+    if (PRIVATE_DEPLOYMENT) {
+      // 私有化部署模式：直接抛出错误，不尝试调用 AWS packager
+      const errorMsg = `[私有化部署] 依赖 ${depName}@${normalizedVersion} 在本地 bucket 中不存在，请先打包并上传到 ${BUCKET_URL}`;
+      console.error(errorMsg);
+      throw new Error(errorMsg);
+    }
+    
+    // 以下代码仅在非私有化部署时执行（保留用于参考）
     // The dep has not been generated yet...
-    const packagerRequestUrl = `${PACKAGER_URL}/${dependencyUrl}`;
-    await requestPackager(packagerRequestUrl, 'POST');
-
-    return requestPackager(fullUrl);
+    // const packagerRequestUrl = `${PACKAGER_URL}/${dependencyUrl}`;
+    // await requestPackager(packagerRequestUrl, 'POST');
+    // return requestPackager(fullUrl);
+    throw e;
   }
 }

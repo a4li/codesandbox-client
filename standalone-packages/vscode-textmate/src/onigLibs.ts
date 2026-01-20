@@ -10,7 +10,8 @@ let onigasmLib: Thenable<IOnigLib> = null;
 let onigurumaLib: Thenable<IOnigLib> = null;
 
 async function getWasm() {
-	const wasmPath = '/public/vscode-oniguruma/1.3.1/onig.wasm';
+	// Use internal unpkg service for intranet deployment
+	const wasmPath = 'https://10.4.5.136/unpkg/vscode-oniguruma@1.3.1/release/onig.wasm';
 
 	const response = await fetch(wasmPath);
 
@@ -19,19 +20,34 @@ async function getWasm() {
 
 export async function getOnigasm(): Promise<IOnigLib> {
 	if (!onigasmLib) {
-		const onigasmModule = require('vscode-oniguruma');
-		const wasmBin = await getWasm()
-		onigasmLib = onigasmModule.loadWASM(wasmBin).then((_: any) => {
-			return {
-				createOnigScanner(patterns: string[]) { return new onigasmModule.OnigScanner(patterns); },
-				createOnigString(s: string) {
-					const r = new onigasmModule.OnigString(s);
+		try {
+			const onigasmModule = require('vscode-oniguruma');
+			const wasmBin = await getWasm();
+			onigasmLib = onigasmModule.loadWASM(wasmBin).then((_: any) => {
+				return {
+					createOnigScanner(patterns: string[]) { return new onigasmModule.OnigScanner(patterns); },
+					createOnigString(s: string) {
+						const r = new onigasmModule.OnigString(s);
 
-					(<any>r).$str = s;
-					return r;
-				 }
-			};
-		});
+						(<any>r).$str = s;
+						return r;
+					 }
+				};
+			});
+		} catch (error) {
+			console.warn('[vscode-textmate] Failed to load onigasm WASM, syntax highlighting may be limited:', error);
+			// Fallback to a basic implementation that doesn't crash
+			onigasmLib = Promise.resolve({
+				createOnigScanner(patterns: string[]) {
+					return {
+						findNextMatchSync: (): null => null
+					} as any;
+				},
+				createOnigString(s: string) {
+					return { content: s } as any;
+				}
+			});
+		}
 	}
 	return onigasmLib;
 }

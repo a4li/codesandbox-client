@@ -1,0 +1,131 @@
+# CodeSandbox Nginx 配置示例
+# 请根据你的实际情况修改配置
+
+server {
+    listen 80;
+    # 如果使用 HTTPS，添加以下配置：
+    # listen 443 ssl http2;
+    # ssl_certificate /path/to/your/cert.pem;
+    # ssl_certificate_key /path/to/your/key.pem;
+    
+    server_name 10.4.5.136;  # 改为你的域名或 IP
+    
+    # www 目录的路径，改为你实际的路径
+    root /path/to/www;
+    index index.html;
+    
+    # 启用 gzip 压缩
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/javascript application/json;
+    
+    # 设置 Origin-Agent-Cluster 头
+    add_header Origin-Agent-Cluster ?0;
+    
+    # 静态文件缓存
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # unpkg CDN 反向代理 - 关键配置！
+    location /unpkg/ {
+        # 移除 /unpkg 前缀，直接代理到 unpkg.com
+        rewrite ^/unpkg/(.*)$ /$1 break;
+        
+        proxy_pass https://unpkg.com;
+        proxy_ssl_server_name on;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
+        
+        # 设置正确的 Host 头
+        proxy_set_header Host unpkg.com;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # 缓存配置
+        proxy_cache_valid 200 304 1d;
+        proxy_cache_valid 404 1m;
+        
+        # 超时设置
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        
+        # 允许跨域
+        add_header Access-Control-Allow-Origin *;
+        add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type, Authorization";
+    }
+    
+    # packager 服务反向代理 - 用于预构建的包
+    location /packager2/ {
+        rewrite ^/packager2/(.*)$ /$1 break;
+        
+        proxy_pass https://prod-packager-packages.codesandbox.io;
+        proxy_ssl_server_name on;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
+        
+        proxy_set_header Host prod-packager-packages.codesandbox.io;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 60s;
+        
+        add_header Access-Control-Allow-Origin *;
+    }
+    
+    # 静态 CDN 资源代理（Google Fonts 等）
+    location /static/cdn/ {
+        rewrite ^/static/cdn/(.*)$ /$1 break;
+        
+        proxy_pass https://fonts.googleapis.com;
+        proxy_ssl_server_name on;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
+        
+        proxy_set_header Host fonts.googleapis.com;
+        
+        # 缓存静态资源
+        proxy_cache_valid 200 7d;
+        
+        add_header Access-Control-Allow-Origin *;
+    }
+    
+    # 处理 SPA 路由，所有未匹配的请求返回 index.html
+    location / {
+        try_files $uri $uri/ /index.html?$query_string;
+    }
+    
+    # 代理 WebSocket 连接（如果需要）
+    location /ws {
+        proxy_pass http://localhost:3000;  # 如果有后端服务
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+
+# 如果使用国内镜像，可以使用以下配置（性能更好）
+# server {
+#     listen 80;
+#     server_name 10.4.5.136;
+#     
+#     root /path/to/www;
+#     index index.html;
+#     
+#     # 使用国内 unpkg 镜像
+#     location /unpkg/ {
+#         rewrite ^/unpkg/(.*)$ /$1 break;
+#         proxy_pass https://unpkg.zhimg.com;  # 知乎镜像
+#         # 或者使用：https://cdn.jsdelivr.net/npm
+#         proxy_ssl_server_name on;
+#         proxy_set_header Host unpkg.zhimg.com;
+#         add_header Access-Control-Allow-Origin *;
+#     }
+#     
+#     # 其他配置同上...
+# }

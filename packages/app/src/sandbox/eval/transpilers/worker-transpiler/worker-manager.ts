@@ -73,24 +73,43 @@ export class WorkerManager {
     this.maxConcurrency = maxConcurrency;
     this.hasFS = hasFS;
 
-    if (preload) {
-      this.initialize();
-    }
+    // 优化：改为懒加载模式，只在实际需要时创建 Worker
+    // 避免启动时立即创建所有 Worker 导致大量并发加载
+    // this.initialize();  // 禁用预加载
   }
 
   initialize() {
+    // Parallel worker initialization for faster startup
+    const workerPromises: Array<Promise<void>> = [];
     for (let i = this.workerCount; i < this.maxWorkerCount; i++) {
       const p = this.loadWorker().catch(console.error);
-      if (!this.firstLoadPromise) {
-        this.firstLoadPromise = p;
-      }
+      workerPromises.push(p);
+    }
+    
+    // Store the combined promise so first task can wait for all workers
+    if (workerPromises.length > 0) {
+      this.firstLoadPromise = Promise.all(workerPromises).then(() => {});
     }
   }
 
   dispose() {
+    // 🔧 修复内存泄漏：清理所有待处理的调用
+    this.pendingCalls.forEach(call => {
+      call.reject(new Error('Worker disposed'));
+    });
+    this.pendingCalls = [];
+    
+    // 🔧 清理所有活跃调用
+    this.activeCalls.forEach(call => {
+      call.reject(new Error('Worker disposed'));
+    });
+    this.activeCalls = new Map();
+    
+    // 终止所有 Worker
     this.workers.forEach(w => w.worker.terminate());
     this.workers = new Map();
     this.workerCount = 0;
+    this.firstLoadPromise = null;
   }
 
   handleWorkerReady(workerData: WorkerData) {
@@ -212,6 +231,9 @@ export class WorkerManager {
   handleCallResponse(msg: any) {
     const foundCall = this.activeCalls.get(msg.idx);
     if (foundCall) {
+      // 🔧 修复内存泄漏：响应处理完成后从 Map 中删除
+      this.activeCalls.delete(msg.idx);
+
       if (!msg.isError) {
         foundCall.resolve(msg.data);
       } else {
@@ -267,6 +289,11 @@ export class WorkerManager {
         resolve,
         reject,
       });
+
+      // 懒加载：如果没有 Worker，创建第一个
+      if (this.workerCount === 0) {
+        this.loadWorker().catch(console.error);
+      }
 
       this.executeRemainingTasks();
     });

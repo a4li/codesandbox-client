@@ -30,8 +30,9 @@ prefetchScript(
 
 // const WORKERS_TO_LOAD = process.env.SANDPACK ? 1 : 3;
 
-// 改动----无论是否是 SANDPACK，均使用 3 个线程运行 babel
-const WORKERS_TO_LOAD = 3;
+// 优化改动----使用 1 个 Worker 避免重复加载 babel.min.js
+// 必须与 babel/index.ts 中的 WORKER_COUNT 保持一致
+const WORKERS_TO_LOAD = 1;
 // @ts-ignore
 globalThis.babelworkers = [];
 for (let i = 0; i < WORKERS_TO_LOAD; i++) {

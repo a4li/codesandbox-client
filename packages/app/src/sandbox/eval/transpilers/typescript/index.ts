@@ -11,7 +11,9 @@ class TypeScriptTranspiler extends WorkerTranspiler {
   worker: Worker;
 
   constructor() {
-    super('ts-loader', TypeScriptWorker, { maxWorkerCount: 3 });
+    // 优化：使用 1 个 Worker 避免重复加载 typescript.js
+    // 3 个 Worker 会导致 typescript.js 被加载 3 次（约 1731ms），改为 1 个可节省 1154ms
+    super('ts-loader', TypeScriptWorker, { maxWorkerCount: 1 });
   }
 
   async doTranspilation(

@@ -274,7 +274,7 @@ module.exports = merge(commonConfig, {
         },
         {
           // urlPattern: /prod-packager-packages\.codesandbox\.io/,
-          urlPattern: /^https:\/\/10\.4\.5\.136\/packager/,
+          urlPattern: /^https:\/\/10\.4\.5\.136\/packager2/,
           handler: 'cacheFirst',
           options: {
             cache: {

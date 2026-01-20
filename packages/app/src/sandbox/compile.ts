@@ -16,6 +16,7 @@ import {
   consumeCache,
   deleteAPICache,
   saveCache,
+  clearIndexedDBCache,
 } from 'sandpack-core/lib/cache';
 import { Module } from 'sandpack-core/lib/types/module';
 import * as metrics from '@codesandbox/common/lib/utils/metrics';
@@ -46,11 +47,173 @@ import handleExternalResources, {
 import setScreen, { resetScreen } from './status-screen';
 import { showRunOnClick } from './status-screen/run-on-click';
 import { SCRIPT_VERSION } from '.';
+import babelTranspiler from './eval/transpilers/babel';
 
 let manager: Manager | null = null;
 let actionsEnabled = false;
 
 const debug = _debug('cs:compiler');
+
+// 🚀 优化: 暴露 Babel 缓存 API 到全局
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    (window as any).__babelCache = {
+      getStats: () => babelTranspiler.getCacheStats(),
+      printStats: () => babelTranspiler.printCacheStats(),
+      clear: () => babelTranspiler.clearCompilationCache(),
+      clearPersisted: () => babelTranspiler.clearPersistedCache(),
+      persist: async () => {
+        await babelTranspiler.exportAndPersistCache();
+        console.log('[Cache] ✅ Manual persist completed (IndexedDB)');
+      },
+      restore: async () => {
+        await babelTranspiler.restorePersistedCache();
+        console.log('[Cache] ✅ Manual restore completed (IndexedDB)');
+      },
+      debugKeys: async (count?: number) => {
+        try {
+          await (babelTranspiler as any).workerManager.callFn({
+            method: 'debug-cache-keys',
+            data: { count: count || 5 },
+          });
+        } catch (e) {
+          console.warn('Failed to debug cache keys:', e);
+        }
+      },
+    };
+    console.log('[Babel Cache] API: window.__babelCache (IndexedDB persistence)');
+    
+    // 🔧 调试: 暴露 manager 统计 API
+    (window as any).__managerStats = () => {
+      if (!manager) {
+        console.log('Manager not initialized');
+        return null;
+      }
+      const stats = {
+        transpiledModulesCount: Object.keys(manager.transpiledModules).length,
+        transpiledModulesByHashCount: Object.keys(manager.transpiledModulesByHash).length,
+        cachedPathsCount: Object.keys(manager.cachedPaths).length,
+        transpileJobsCount: Object.keys(manager.transpileJobs).length,
+        nodeModulesCount: Object.keys(manager.transpiledModules).filter(p => p.startsWith('/node_modules')).length,
+        userModulesCount: Object.keys(manager.transpiledModules).filter(p => !p.startsWith('/node_modules')).length,
+        resolverCacheSize: manager.resolverCache?.size || 0,
+        esmodulesSize: manager.esmodules?.size || 0,
+      };
+      console.table(stats);
+      return stats;
+    };
+    
+    // 🔧 调试: 深度内存分析
+    (window as any).__memoryAnalysis = () => {
+      if (!manager) {
+        console.log('Manager not initialized');
+        return null;
+      }
+      
+      // 统计所有模块的代码大小
+      let totalCodeSize = 0;
+      let totalCompiledSize = 0;
+      let moduleWithLargestCode = { path: '', size: 0 };
+      
+      Object.values(manager.transpiledModulesByHash).forEach((tm: any) => {
+        const codeSize = tm.module?.code?.length || 0;
+        totalCodeSize += codeSize;
+        
+        if (codeSize > moduleWithLargestCode.size) {
+          moduleWithLargestCode = { path: tm.module?.path, size: codeSize };
+        }
+        
+        // 检查编译结果大小
+        if (tm.source?.compiledCode) {
+          totalCompiledSize += tm.source.compiledCode.length;
+        }
+      });
+      
+      const result = {
+        totalCodeSizeMB: (totalCodeSize / 1024 / 1024).toFixed(2),
+        totalCompiledSizeMB: (totalCompiledSize / 1024 / 1024).toFixed(2),
+        largestModule: moduleWithLargestCode,
+        heapUsedMB: ((performance as any).memory?.usedJSHeapSize / 1024 / 1024 || 0).toFixed(2),
+      };
+      
+      console.log('=== Memory Analysis ===');
+      console.table(result);
+      return result;
+    };
+    
+    // 🔧 调试: 检查全局对象泄漏
+    (window as any).__checkGlobalLeaks = () => {
+      const suspicious: { name: string; type: string; size?: number }[] = [];
+      
+      // 检查常见的泄漏模式
+      const knownGlobals = new Set(['window', 'document', 'console', 'performance', 'navigator', 'location', 'history', 'localStorage', 'sessionStorage', 'indexedDB', 'crypto', 'fetch', 'XMLHttpRequest', 'WebSocket', 'Worker', 'Blob', 'File', 'FileReader', 'FormData', 'URL', 'URLSearchParams', 'Headers', 'Request', 'Response', 'AbortController', 'CustomEvent', 'Event', 'EventTarget', 'Node', 'Element', 'HTMLElement', 'MutationObserver', 'IntersectionObserver', 'ResizeObserver', 'Promise', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Array', 'Object', 'String', 'Number', 'Boolean', 'Symbol', 'BigInt', 'Date', 'RegExp', 'Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError', 'JSON', 'Math', 'Reflect', 'Proxy', 'Intl', 'ArrayBuffer', 'SharedArrayBuffer', 'DataView', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array', 'alert', 'confirm', 'prompt', 'print', 'open', 'close', 'stop', 'focus', 'blur', 'scroll', 'scrollTo', 'scrollBy', 'moveTo', 'moveBy', 'resizeTo', 'resizeBy', 'getComputedStyle', 'matchMedia', 'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'queueMicrotask', 'atob', 'btoa', 'escape', 'unescape', 'encodeURI', 'decodeURI', 'encodeURIComponent', 'decodeURIComponent', 'isNaN', 'isFinite', 'parseFloat', 'parseInt', 'eval', 'Function', 'Infinity', 'NaN', 'undefined', 'globalThis', 'self', 'top', 'parent', 'frames', 'length', 'opener', 'closed', 'frameElement', 'name', 'status', 'defaultStatus', 'origin', 'innerWidth', 'innerHeight', 'outerWidth', 'outerHeight', 'pageXOffset', 'pageYOffset', 'scrollX', 'scrollY', 'screenX', 'screenY', 'screenLeft', 'screenTop', 'screen', 'devicePixelRatio', 'visualViewport', 'styleMedia', 'onload', 'onerror', 'onmessage', 'onbeforeunload', 'onunload']);
+      
+      for (const key in window) {
+        if (!knownGlobals.has(key) && !key.startsWith('webkit') && !key.startsWith('on')) {
+          try {
+            const val = (window as any)[key];
+            const type = typeof val;
+            if (type === 'object' && val !== null) {
+              const size = JSON.stringify(val)?.length || 0;
+              if (size > 10000) { // 大于 10KB
+                suspicious.push({ name: key, type, size });
+              }
+            } else if (type === 'function') {
+              suspicious.push({ name: key, type });
+            }
+          } catch (e) {
+            // 忽略无法访问的属性
+          }
+        }
+      }
+      
+      console.log('=== Suspicious Global Objects ===');
+      console.table(suspicious.sort((a, b) => (b.size || 0) - (a.size || 0)).slice(0, 20));
+      return suspicious;
+    };
+    
+    // 🔧 调试: 强制清理并测量
+    (window as any).__forceCleanup = () => {
+      console.log('=== Force Cleanup ===');
+      const before = (performance as any).memory?.usedJSHeapSize / 1024 / 1024 || 0;
+      
+      // 尝试清理 React
+      try {
+        const reactDOM = (window as any).ReactDOM;
+        if (reactDOM && reactDOM.unmountComponentAtNode) {
+          document.querySelectorAll('#root, #app, [data-reactroot]').forEach(el => {
+            try {
+              reactDOM.unmountComponentAtNode(el);
+            } catch (e) {}
+          });
+        }
+      } catch (e) {}
+      
+      // 清理可能的全局引用
+      const toClean = ['$model', '__REDUX_STORE__', '__store__', 'store'];
+      toClean.forEach(key => {
+        if ((window as any)[key]) {
+          console.log(`Cleaning window.${key}`);
+          try {
+            delete (window as any)[key];
+          } catch (e) {
+            (window as any)[key] = null;
+          }
+        }
+      });
+      
+      // 触发 GC（如果可用）
+      if ((window as any).gc) {
+        (window as any).gc();
+      }
+      
+      setTimeout(() => {
+        const after = (performance as any).memory?.usedJSHeapSize / 1024 / 1024 || 0;
+        console.log(`Memory: ${before.toFixed(2)} MB -> ${after.toFixed(2)} MB (${(before - after).toFixed(2)} MB freed)`);
+      }, 1000);
+    };
+  }, 100);
+}
 
 export function areActionsEnabled() {
   return actionsEnabled;
@@ -438,9 +601,15 @@ async function updateManager(
   managerModules: { [path: string]: Module },
   configurations: ParsedConfigurationFiles
 ): Promise<TranspiledModule[]> {
+  const start = Date.now();
   manager.updateConfigurations(configurations);
+  console.log('[updateManager] updateConfigurations:', Date.now() - start, 'ms');
+  
   await manager.preset.setup(manager);
+  console.log('[updateManager] preset.setup:', Date.now() - start, 'ms');
+  
   return manager.updateData(managerModules).then(x => {
+    console.log('[updateManager] updateData:', Date.now() - start, 'ms');
     changedModuleCount = x.length;
     return x;
   });
@@ -620,7 +789,23 @@ async function compile(opts: CompileOptions) {
     const parsedPackageJSON = configurations.package.parsed;
     const parsedSandboxJSON = configurations.sandbox.parsed;
 
+    // 🔧 sandboxId 优先级：
+    // 1. opts.sandboxId - 从父窗口传入
+    // 2. parsedSandboxJSON.sandboxId - 从 sandbox.config.json 读取
+    // 3. 自动生成 - 基于文件数量和代码长度
     sandboxId = opts.sandboxId || parsedSandboxJSON.sandboxId;
+    if (!sandboxId) {
+      // 备用方案：使用文件数量和代码长度生成 ID
+      const srcFiles = Object.keys(modules).filter(p => p.startsWith('/src/'));
+      const totalCodeLength = srcFiles.reduce((sum, p) => sum + (modules[p]?.code?.length || 0), 0);
+      const entryLength = modules[entry]?.code?.length || 0;
+      
+      const pkgName = parsedPackageJSON.name || 'sandbox';
+      sandboxId = `local-${pkgName}-${srcFiles.length}-${totalCodeLength}-${entryLength}`;
+      console.log('[Compile] Auto-generated sandboxId:', sandboxId);
+    } else {
+      console.log('[Compile] Using provided sandboxId:', sandboxId);
+    }
 
     dispatch({ type: 'status', status: 'installing-dependencies' });
 
@@ -641,7 +826,15 @@ async function compile(opts: CompileOptions) {
 
     dependencies = await manager.preset.processDependencies(dependencies);
 
+    // 🔍 调试: 详细计时
+    const timings: { [key: string]: number } = {};
+    const markTime = (label: string) => {
+      timings[label] = Date.now() - startTime;
+      console.log(`[Timing] ${label}: ${timings[label]}ms`);
+    };
+
     metrics.measure('dependencies');
+    markTime('before-dependencies');
 
     if (firstLoad && showLoadingScreen) {
       setScreen({
@@ -686,6 +879,7 @@ async function compile(opts: CompileOptions) {
       }
     );
     metrics.endMeasure('dependencies', { displayName: 'Dependencies' });
+    markTime('after-dependencies');
 
     const shouldReloadManager =
       (isNewCombination && !firstLoad) || manager.id !== sandboxId;
@@ -702,19 +896,37 @@ async function compile(opts: CompileOptions) {
         { hasFileResolver, reactDevTools }
       );
     }
+    markTime('after-manager-init');
 
     if (shouldReloadManager || firstLoad) {
       // Now initialize the data the manager can only use once dependencies are loaded
 
       manager.setManifest(manifest);
+      markTime('after-setManifest');
+      
       // We save the state of transpiled modules, and load it here again. Gives
       // faster initial loads.
       usedCache = await consumeCache(manager);
+      markTime('after-consumeCache');
     }
 
     metrics.measure('transpilation');
 
     const updatedModules = (await updateManager(modules, configurations)) || [];
+    markTime('after-updateManager');
+    
+    // 🔍 调试: 输出缓存状态
+    console.log('[Cache Debug]', {
+      usedCache,
+      changedModuleCount,
+      firstLoad,
+    });
+    
+    // 🔧 修复: 禁用 canSkipTranspilation 优化
+    // 原因: manifest 中的模块（如 preact.module.js）没有被序列化到缓存中
+    // 当 canSkipTranspilation=true 时，这些模块不会被编译，导致 ES6 export 语法错误
+    // 之前的逻辑: const canSkipTranspilation = usedCache && changedModuleCount === 0 && firstLoad;
+    const canSkipTranspilation = false;
 
     const possibleEntries = templateDefinition.getEntries(configurations);
 
@@ -731,24 +943,39 @@ async function compile(opts: CompileOptions) {
     const main = absolute(foundMain);
     managerModuleToTranspile = modules[main];
 
-    if (showLoadingScreen) {
-      setScreen({
-        type: 'loading',
-        text: 'Transpiling Modules...',
-        showFullScreen: firstLoad,
-      });
+    // 🚀 优化: 只有在需要编译时才显示 loading 和执行 transpile
+    if (!canSkipTranspilation) {
+      if (showLoadingScreen) {
+        setScreen({
+          type: 'loading',
+          text: 'Transpiling Modules...',
+          showFullScreen: firstLoad,
+        });
+      }
+
+      dispatch({ type: 'status', status: 'transpiling' });
+      manager.setStage('transpilation');
+
+      await manager.transpileModules(managerModuleToTranspile);
+      markTime('after-transpileModules');
+      
+      // 🔧 修复: 确保所有模块都被编译，包括从缓存加载但依赖未编译的模块
+      // 原问题: manifest 中的 npm 模块（如 preact.module.js）在缓存恢复后没有被编译
+      await manager.verifyTreeTranspiled();
+      markTime('after-verifyTreeTranspiled');
+      
+      metrics.endMeasure('transpilation', { displayName: 'Transpilation' });
+    } else {
+      // 即使跳过 transpilation，也需要确保 manager 状态正确
+      manager.setStage('transpilation');
+      // 验证树已编译（从缓存加载的模块）
+      await manager.verifyTreeTranspiled();
+      markTime('after-verifyTreeTranspiled');
     }
-
-    dispatch({ type: 'status', status: 'transpiling' });
-    manager.setStage('transpilation');
-
-    await manager.verifyTreeTranspiled();
-    await manager.transpileModules(managerModuleToTranspile);
-
-    metrics.endMeasure('transpilation', { displayName: 'Transpilation' });
 
     dispatch({ type: 'status', status: 'evaluating' });
     manager.setStage('evaluation');
+    markTime('before-evaluation');
 
     if (!skipEval) {
       resetScreen();
@@ -811,6 +1038,71 @@ async function compile(opts: CompileOptions) {
           process.env.LOCAL_SERVER ||
           process.env.SANDPACK
         ) {
+          // 🔧 修复: 在重置 innerHTML 之前，先卸载 React 组件以避免内存泄漏
+          if (!firstLoad) {
+            try {
+              // 0. 首先调用低代码平台的清理函数（如果存在）
+              // 这会清理 react-easy-state 的 store，避免对已卸载组件的更新
+              if (typeof (window as any).__lowcodeCleanup === 'function') {
+                (window as any).__lowcodeCleanup();
+              }
+              
+              // 1. 触发 React 组件的卸载生命周期
+              const reactDOM = (window as any).ReactDOM;
+              const rootSelectors = ['#root', '#app', '[data-reactroot]'];
+              
+              rootSelectors.forEach(selector => {
+                const el = document.querySelector(selector);
+                if (el) {
+                  // React 18+ with createRoot
+                  if ((el as any)._reactRootContainer?._internalRoot) {
+                    try {
+                      (el as any)._reactRootContainer.unmount();
+                    } catch (e) { /* ignore */ }
+                  }
+                  // React 17 and below
+                  else if (reactDOM?.unmountComponentAtNode) {
+                    try {
+                      reactDOM.unmountComponentAtNode(el);
+                    } catch (e) { /* ignore */ }
+                  }
+                }
+              });
+              
+              // 2. 等待一个微任务周期让 React 完成卸载
+              await new Promise(resolve => setTimeout(resolve, 0));
+              
+              // 3. 备用清理：如果低代码平台没有提供清理函数，手动清理
+              if (typeof (window as any).__lowcodeCleanup !== 'function') {
+                const lowcodeGlobals = ['$model', '$variable', '$message', '$modal', '$output', '$urlParams', '$routes', '$item'];
+                lowcodeGlobals.forEach(key => {
+                  const val = (window as any)[key];
+                  if (val && typeof val === 'object') {
+                    Object.keys(val).forEach(k => {
+                      try { delete val[k]; } catch (e) { /* ignore */ }
+                    });
+                  }
+                });
+                
+                const lowcode = (window as any).lowcode;
+                if (lowcode) {
+                  ['stores', 'services', 'refs', 'page'].forEach(prop => {
+                    if (lowcode[prop]) {
+                      Object.keys(lowcode[prop]).forEach(k => {
+                        if (prop !== 'stores' || k !== 'currentPage') {
+                          try { delete lowcode[prop][k]; } catch (e) { /* ignore */ }
+                        }
+                      });
+                    }
+                  });
+                }
+              }
+              
+            } catch (e) {
+              console.warn('[Cleanup] Error during cleanup:', e);
+            }
+          }
+          
           // The HTML is loaded from the server as a static file, no need to set the innerHTML of the body
           // on the first run. However, if there's no server to provide the static file (in the case of a local server
           // or sandpack), then do it anyways.
@@ -857,15 +1149,17 @@ async function compile(opts: CompileOptions) {
       metrics.endMeasure('external-resources', {
         displayName: 'External Resources',
       });
+      markTime('after-external-resources');
 
       const oldHTML = document.body.innerHTML;
       metrics.measure('evaluation');
-      // 执行编译后的模块代码
+      
       const evalled = manager.evaluateModule(managerModuleToTranspile, {
         force: isModuleView,
       });
 
       metrics.endMeasure('evaluation', { displayName: 'Evaluation' });
+      markTime('after-evaluation');
 
       const domChanged =
         !manager.preset.htmlDisabled && oldHTML !== document.body.innerHTML;
@@ -909,15 +1203,23 @@ async function compile(opts: CompileOptions) {
       createCodeSandboxOverlay(modules);
     }
 
-    debug(`Total time: ${Date.now() - startTime}ms`);
+    // 🚀 优化: 显示更详细的加载信息
+    if (canSkipTranspilation) {
+      debug(`Total time: ${Date.now() - startTime}ms (cache hit, transpilation skipped)`);
+    } else {
+      debug(`Total time: ${Date.now() - startTime}ms`);
+    }
 
     metrics.endMeasure('compilation', { displayName: 'Compilation' });
     metrics.endMeasure('total', { displayName: 'Total', lastTime: 0 });
-    dispatch({
-      type: 'success',
-    });
+    
+    dispatch({ type: 'status', status: 'idle' });
+    dispatch({ type: 'success' });
 
     saveCache(managerModuleToTranspile, manager, changedModuleCount, firstLoad);
+    
+    // 🚀 优化: 编译完成后保存 Babel 编译缓存到 IndexedDB
+    babelTranspiler.persistCacheIfNeeded();
 
     setTimeout(async () => {
       try {
@@ -939,6 +1241,12 @@ async function compile(opts: CompileOptions) {
 
     if (manager) {
       manager.clearCache();
+      
+      // 🔧 修复: 如果是首次加载且使用了缓存导致错误，清除 IndexedDB 缓存
+      if (firstLoad && usedCache) {
+        console.warn('[Cache] Clearing IndexedDB cache due to error with cached data');
+        clearIndexedDBCache().catch(() => {});
+      }
 
       if (firstLoad && changedModuleCount === 0) {
         await deleteAPICache(manager.id, SCRIPT_VERSION);
@@ -963,18 +1271,25 @@ async function compile(opts: CompileOptions) {
     }, 600);
 
     if (manager) {
-      const managerState = {
-        ...(await manager.serialize({ optimizeForSize: false })),
-      };
-      delete managerState.cachedPaths;
-      managerState.entry = managerModuleToTranspile
-        ? managerModuleToTranspile.path
-        : null;
+      // 🚀 优化: 私有化部署不需要发送完整状态到父窗口
+      // 这会序列化所有模块代码，导致大量内存分配
+      // 如果需要调试状态，可以设置 ENABLE_STATE_SYNC = true
+      const ENABLE_STATE_SYNC = false;
+      
+      if (ENABLE_STATE_SYNC) {
+        const managerState = {
+          ...(await manager.serialize({ optimizeForSize: false })),
+        };
+        delete managerState.cachedPaths;
+        managerState.entry = managerModuleToTranspile
+          ? managerModuleToTranspile.path
+          : null;
 
-      dispatch({
-        type: 'state',
-        state: managerState,
-      });
+        dispatch({
+          type: 'state',
+          state: managerState,
+        });
+      }
 
       manager.isFirstLoad = false;
     }
@@ -1004,8 +1319,12 @@ async function compile(opts: CompileOptions) {
 
   firstLoad = false;
 
-  dispatch({ type: 'status', status: 'idle' });
-  dispatch({ type: 'done', compilatonError: hadError });
+  // 注意：status 和 done 已经在 evaluation 完成后立即发送
+  // 这里不再重复发送，避免覆盖之前的状态
+  if (hadError) {
+    dispatch({ type: 'status', status: 'idle' });
+    dispatch({ type: 'done', compilatonError: hadError });
+  }
 
   if (typeof (window as any).__puppeteer__ === 'function') {
     setTimeout(() => {

@@ -95,7 +95,8 @@ export const requestSandpackSecretFromApp = async (
       `scrollbars=no,toolbar=no,location=no,titlebar=no,directories=no,status=no,menubar=no, ${getPopupDimensions()}`
     );
 
-    setInterval(() => {
+    // 🔧 修复内存泄漏：保存 interval ID 以便清理
+    const intervalId = setInterval(() => {
       if (popup) {
         popup.postMessage(
           { $type: 'request-sandpack-secret', parentDomain },
@@ -108,6 +109,9 @@ export const requestSandpackSecretFromApp = async (
       if (e.data && e.data.$type === 'sandpack-secret') {
         setSandpackSecret(e.data.token);
         window.removeEventListener('message', listener);
+        
+        // 🔧 清理 interval，防止内存泄漏
+        clearInterval(intervalId);
 
         if (popup) {
           popup.close();
