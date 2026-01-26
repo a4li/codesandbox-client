@@ -1,4 +1,5 @@
 const SANDPACK_SECRET_COOKIE_NAME = 'csb_sandpack_secret';
+let lastSetSandpackSecret: string | null = null;
 
 export const getSandpackSecret = () =>
   document.cookie.replace(
@@ -18,21 +19,31 @@ export const setSandpackSecret = (secret: string) => {
   }
 
   const cookieValue = getSandpackSecret();
-  if (
-    (cookieValue && !secret) ||
-    (secret && !cookieValue) ||
-    cookieValue !== secret
-  ) {
-    if (secret) {
-      document.cookie = `${SANDPACK_SECRET_COOKIE_NAME}=${secret};samesite=none;secure;`;
+  const nextSecret = secret || '';
 
-      setTimeout(() => {
-        location.reload();
-      }, 1000);
-    } else {
+  if (!nextSecret) {
+    if (cookieValue) {
       removeSandpackSecret();
     }
+    lastSetSandpackSecret = null;
+    return;
   }
+
+  if (cookieValue === nextSecret) {
+    lastSetSandpackSecret = nextSecret;
+    return;
+  }
+
+  if (lastSetSandpackSecret === nextSecret) {
+    return;
+  }
+
+  document.cookie = `${SANDPACK_SECRET_COOKIE_NAME}=${nextSecret};samesite=none;secure;`;
+  lastSetSandpackSecret = nextSecret;
+
+  setTimeout(() => {
+    location.reload();
+  }, 1000);
 };
 
 function getPopupOffset({ width, height }: { width: number; height: number }) {
@@ -89,14 +100,52 @@ export const requestSandpackSecretFromApp = async (
   })();
 
   return new Promise(resolve => {
+    let settled = false;
+
+    const finish = (token?: string) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      resolve(token || '');
+    };
+
     const popup = window.open(
       host + '/auth/sandpack/' + teamId,
       '',
       `scrollbars=no,toolbar=no,location=no,titlebar=no,directories=no,status=no,menubar=no, ${getPopupDimensions()}`
     );
 
+    if (!popup) {
+      finish('');
+      return;
+    }
+
+    let intervalId: number | undefined;
+    let timeoutId: number | undefined;
+    let listener: ((e: any) => void) | undefined;
+
+    const cleanup = () => {
+      if (intervalId !== undefined) {
+        clearInterval(intervalId);
+      }
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+      if (listener) {
+        window.removeEventListener('message', listener);
+      }
+    };
+
     // 🔧 修复内存泄漏：保存 interval ID 以便清理
-    const intervalId = setInterval(() => {
+    intervalId = window.setInterval(() => {
+      if (popup.closed) {
+        cleanup();
+        finish('');
+        return;
+      }
+
       if (popup) {
         popup.postMessage(
           { $type: 'request-sandpack-secret', parentDomain },
@@ -105,19 +154,25 @@ export const requestSandpackSecretFromApp = async (
       }
     }, 500);
 
-    const listener = (e: any) => {
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      if (popup && !popup.closed) {
+        popup.close();
+      }
+      finish('');
+    }, 60000);
+
+    listener = (e: any) => {
       if (e.data && e.data.$type === 'sandpack-secret') {
         setSandpackSecret(e.data.token);
-        window.removeEventListener('message', listener);
-        
         // 🔧 清理 interval，防止内存泄漏
-        clearInterval(intervalId);
+        cleanup();
 
         if (popup) {
           popup.close();
         }
 
-        resolve(e.data.token);
+        finish(e.data.token);
       }
     };
 

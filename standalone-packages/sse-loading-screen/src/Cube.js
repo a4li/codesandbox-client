@@ -74,7 +74,12 @@ const Sides = styled.div`
     background-color: ${({ color }) => color};
     border: ${({ size }) => size / 70}px solid rgba(255, 255, 255, 0.4);
   }
-`.withComponent(({ noAnimation, color, ...rest }) => <div {...rest} />);
+`.withComponent(props => {
+  const rest = { ...props};
+  delete rest.noAnimation;
+  delete rest.color;
+  return <div {...rest} />;
+});
 
 const Side = styled.div`
   transform-origin: 50% 50%;
@@ -94,15 +99,7 @@ interface Props {
 }
 
 // eslint-disable-next-line
-export default class Cube extends Component<Props> {
-  // Set default properties
-  static defaultProps = {
-    color: 'rgba(63, 168, 243, 0.6)',
-    speed: 25,
-    noAnimation: false,
-    offset: 0,
-    width: 75,
-  };
+class Cube extends Component<Props> {
 
   render() {
     const {
@@ -166,3 +163,14 @@ export default class Cube extends Component<Props> {
     );
   }
 }
+
+// Set default properties
+Cube.defaultProps = {
+  color: 'rgba(63, 168, 243, 0.6)',
+  speed: 25,
+  noAnimation: false,
+  offset: 0,
+  width: 75,
+};
+
+export default Cube;

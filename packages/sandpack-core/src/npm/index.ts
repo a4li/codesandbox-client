@@ -23,6 +23,8 @@ export type NPMDependencies = {
 // 导出预加载功能
 export {
   preloadCommonDependencies,
+  startPreloadCommonDependencies,
+  PreloadHandle,
   isDependencyPreloaded,
   getPreloadStatus,
   COMMON_LOWCODE_DEPENDENCIES,

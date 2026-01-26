@@ -11,7 +11,10 @@ import { ParsedConfigurationFiles } from '@codesandbox/common/lib/templates/temp
 import { endMeasure, now } from '@codesandbox/common/lib/utils/metrics';
 import DependencyNotFoundError from 'sandbox-hooks/errors/dependency-not-found-error';
 import ModuleNotFoundError from 'sandbox-hooks/errors/module-not-found-error';
-import { preloadCommonDependencies } from './npm/preload-dependencies';
+import {
+  startPreloadCommonDependencies,
+  PreloadHandle,
+} from './npm/preload-dependencies';
 
 import { ResolverCache, resolveAsync, resolveSync } from './resolver/resolver';
 import { generateBenchmarkInterface } from './utils/benchmark';
@@ -119,6 +122,49 @@ const getShimmedModuleFromPath = (currentPath: string, path: string) => ({
 });
 const debug = _debug('cs:compiler:manager');
 
+const setGlobalManagerReference = (manager: Manager) => {
+  const global = getGlobal() as any;
+  const WeakRefConstructor = global.WeakRef as any;
+
+  if (typeof WeakRefConstructor === 'function') {
+    global.managerRef = new WeakRefConstructor(manager);
+    try {
+      Object.defineProperty(global, 'manager', {
+        configurable: true,
+        get: () => {
+          const ref = global.managerRef;
+          return ref && typeof ref.deref === 'function' ? ref.deref() : null;
+        },
+      });
+    } catch (e) {
+      global.manager = manager;
+    }
+  } else {
+    global.manager = manager;
+  }
+};
+
+const clearGlobalManagerReference = (manager: Manager) => {
+  const global = getGlobal() as any;
+  const ref = global.managerRef;
+
+  if (ref && typeof ref.deref === 'function' && ref.deref() === manager) {
+    global.managerRef = undefined;
+  }
+
+  if (global.manager === manager) {
+    try {
+      delete global.manager;
+    } catch (e) {
+      global.manager = null;
+    }
+  }
+
+  if (global.Benchmark && (global.managerRef || global.manager === null)) {
+    global.Benchmark = undefined;
+  }
+};
+
 export type HMRStatus = 'idle' | 'check' | 'apply' | 'fail' | 'dispose';
 type Stage = 'transpilation' | 'evaluation';
 
@@ -183,7 +229,7 @@ export default class Manager implements IEvaluator {
     // 默认将 React 和 ReactDOM 映射到全局变量，避免重复加载
     // 这对低代码项目特别重要，因为它们通过 UMD 加载 React 开发版本
     externals: {
-      'react': 'React',
+      react: 'React',
       'react-dom': 'ReactDOM',
       'react/jsx-runtime': 'React',
       'react-dom/client': 'ReactDOM',
@@ -219,6 +265,8 @@ export default class Manager implements IEvaluator {
   version: string;
 
   esmodules: Map<string, Promise<IRemoteModuleResult>>;
+  preloadHandle?: PreloadHandle;
+  preloadTimeoutId?: ReturnType<typeof setTimeout>;
 
   constructor(
     id: string | null | undefined,
@@ -259,7 +307,7 @@ export default class Manager implements IEvaluator {
     this.modules = modules;
     Object.keys(modules).forEach(k => this.addModule(modules[k]));
 
-    getGlobal().manager = this;
+    setGlobalManagerReference(this);
     if (process.env.NODE_ENV === 'development') {
       // eslint-disable-next-line no-console
       console.log(this);
@@ -292,13 +340,17 @@ export default class Manager implements IEvaluator {
     // 基于生产环境 trace 分析的 Top 16 高频依赖
     // =======================================================
     if (this.isFirstLoad) {
-      setTimeout(() => {
+      this.preloadTimeoutId = setTimeout(() => {
         debug('[Preload] Starting dependency preload...');
-        preloadCommonDependencies((progress) => {
+        const handle = startPreloadCommonDependencies(progress => {
           if (progress.loaded === progress.total) {
-            debug(`[Preload] ✓ Completed - ${progress.total} dependencies cached`);
+            debug(
+              `[Preload] ✓ Completed - ${progress.total} dependencies cached`
+            );
           }
-        }).catch((error) => {
+        });
+        this.preloadHandle = handle;
+        handle.promise.catch(error => {
           debug('[Preload] ✗ Failed:', error.message);
         });
       }, 1500); // 延迟 1.5 秒，避免阻塞沙箱初始化
@@ -434,9 +486,9 @@ export default class Manager implements IEvaluator {
   setManifest(manifest?: Manifest) {
     // 🚀 优化: 在设置新 manifest 之前，清理旧的 node_modules 模块
     // 防止 transpiledModulesByHash 无限增长
-    const oldNodeModulePaths = Object.keys(this.transpiledModules).filter(
-      path => path.startsWith('/node_modules')
-    );
+    const oldNodeModulePaths = Object.keys(
+      this.transpiledModules
+    ).filter(path => path.startsWith('/node_modules'));
     oldNodeModulePaths.forEach(path => {
       const moduleData = this.transpiledModules[path];
       if (moduleData && moduleData.tModules) {
@@ -453,7 +505,7 @@ export default class Manager implements IEvaluator {
       dependencyDependencies: {},
       dependencyAliases: {},
       externals: {
-        'react': 'React',
+        react: 'React',
         'react-dom': 'ReactDOM',
         'react/jsx-runtime': 'React',
         'react-dom/client': 'ReactDOM',
@@ -1280,6 +1332,7 @@ export default class Manager implements IEvaluator {
       }
     });
 
+    // eslint-disable-next-line no-console
     console.log('[updateData] Module diff:', {
       added: addedModules.map(m => m.path),
       updated: updatedModules.map(m => m.path),
@@ -1348,6 +1401,7 @@ export default class Manager implements IEvaluator {
       transpiledModulesToUpdate
     );
 
+    // eslint-disable-next-line no-console
     console.log('[updateData] Modules to transpile:', {
       count: transpiledModulesToUpdate.length,
       modules: transpiledModulesToUpdate.slice(0, 10).map(m => m.module.path),
@@ -1367,6 +1421,7 @@ export default class Manager implements IEvaluator {
         .filter(Boolean) as Array<Promise<TranspiledModule>>
     );
 
+    // eslint-disable-next-line no-console
     console.log('[updateData] Transpilation completed:', {
       resultCount: transpilationResults.length,
       transpileTime: Date.now() - transpileStart,
@@ -1528,7 +1583,7 @@ export default class Manager implements IEvaluator {
         // 忽略清理过程中的错误
       }
     });
-    
+
     // 清空所有模块注册表
     this.transpiledModules = {};
     this.transpiledModulesByHash = {};
@@ -1537,7 +1592,7 @@ export default class Manager implements IEvaluator {
     this.resolverCache = new Map();
     this.esmodules = new Map();
     this.hmrStatusChangeListeners.clear();
-    
+
     if (this.preset) {
       this.preset.getTranspilers().forEach(t => {
         if (t.dispose) {
@@ -1549,6 +1604,18 @@ export default class Manager implements IEvaluator {
         this.fileResolver.protocol.dispose();
       }
     }
+
+    if (this.preloadHandle) {
+      this.preloadHandle.cancel();
+      this.preloadHandle = undefined;
+    }
+
+    if (this.preloadTimeoutId) {
+      clearTimeout(this.preloadTimeoutId);
+      this.preloadTimeoutId = undefined;
+    }
+
+    clearGlobalManagerReference(this);
   }
 
   deleteAPICache() {

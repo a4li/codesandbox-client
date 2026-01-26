@@ -31,6 +31,7 @@
   "scripts": {
     "start": "parcel src/index.html",
     "build": "rimraf dist && parcel build src/index.html --no-source-maps",
+    "test": "node scripts/test-reload-control.js",
     "install-dependencies": "yarn install"
   }
 }

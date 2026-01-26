@@ -20,8 +20,13 @@ import { listenForPreviewSecret } from 'sandbox-hooks/preview-secret';
 
 import Cube from './Cube';
 
+const { createReloadController } = require('./reload-control');
+
 const SECOND = 1000; // ms
 const ERROR_COLOR = '#dc143c';
+const RELOAD_DEBOUNCE_MS = 1500;
+const RELOAD_LIMIT_WINDOW_MS = 60 * SECOND;
+const RELOAD_LIMIT_MAX = 3;
 
 // without this line, CSSPlugin and AttrPlugin may get dropped by your bundler...
 // eslint-disable-next-line
@@ -200,6 +205,26 @@ function updateStatusError(message) {
   console.error(message);
 }
 
+const { scheduleReload } = createReloadController({
+  storage: localStorage,
+  now: () => Date.now(),
+  setTimeoutFn: window.setTimeout.bind(window),
+  clearTimeoutFn: window.clearTimeout.bind(window),
+  debounceMs: RELOAD_DEBOUNCE_MS,
+  windowMs: RELOAD_LIMIT_WINDOW_MS,
+  max: RELOAD_LIMIT_MAX,
+  onReload: () => window.location.reload(true),
+  onBlocked: () => updateStatusError('Reloading too fast'),
+  onSchedule: timeoutId => {
+    reloadTimeout = timeoutId;
+  },
+  onClear: timeoutId => {
+    if (reloadTimeout === timeoutId) {
+      reloadTimeout = null;
+    }
+  },
+});
+
 setTimeout(createMainCube, 500);
 
 const NICE_TITLES = {
@@ -255,12 +280,7 @@ async function start() {
 
   socket.on('sandbox:log', ({ data }) => {
     term.write(data);
-    if (reloadTimeout) {
-      clearTimeout(reloadTimeout);
-    }
-    reloadTimeout = setTimeout(() => {
-      window.location.reload(true);
-    }, 15 * SECOND);
+    scheduleReload(15 * SECOND);
   });
 
   socket.on('sandbox:error', ({ message, unrecoverable }) => {
@@ -311,9 +331,7 @@ async function start() {
   socket.on('sandbox:port', portList => {
     portList.forEach(({ port: newPort, main }) => {
       if ((port === '' && main) || newPort.toString() === port) {
-        setTimeout(() => {
-          window.location.reload(true);
-        }, SECOND);
+        scheduleReload(SECOND);
       }
     })
   });

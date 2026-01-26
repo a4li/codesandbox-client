@@ -59,6 +59,7 @@ class Live {
 
   private identifier = uuid.v4();
   private pendingMessages = new Map();
+  private pendingMessageTimeouts = new Map<string, number>();
   private debug = _debug('cs:socket');
   private channel: Channel | null;
   private messageIndex = 0;
@@ -181,21 +182,22 @@ class Live {
         client_version: VERSION,
       });
 
-      // An offset between 1 and 1.7;
-      const defaultReconnectOffset = 1 + Math.random() * 0.7;
+      // Reconnect backoff with jitter to avoid reconnect storms
+      const defaultReconnectOffset = 0.8 + Math.random() * 0.4;
       let isServerDown = false;
+      const baseReconnectDelay = 1000;
+      const maxReconnectDelay = 30000;
       const reconnectAfterMs = (tries: number) => {
         if (isServerDown) {
-          return Math.floor(3000 + Math.random() * 2000);
+          return Math.floor(
+            Math.min(maxReconnectDelay, 3000 + Math.random() * 4000)
+          );
         }
 
-        // Based on the times tried we slowly increase the reconnect timeout, so first time
-        // we try to reconnect in 10ms, second time in 50ms, third time in 100ms, fourth time in 150ms,
-        // etc...
-        return Math.floor(
-          [10, 50, 100, 150, 200, 250, 500, 1000, 2000][tries - 1] *
-            defaultReconnectOffset
-        );
+        const attempt = Math.max(1, tries);
+        const expDelay = baseReconnectDelay * 1.6 ** (attempt - 1);
+        const jitter = expDelay * (defaultReconnectOffset - 0.8);
+        return Math.floor(Math.min(maxReconnectDelay, expDelay + jitter));
       };
 
       this.socket = new Socket(`${protocol}://${location.host}/socket`, {
@@ -205,9 +207,16 @@ class Live {
       });
 
       let tries = 0;
+      let lastJwtRefreshAt = 0;
+      const jwtRefreshCooldownMs = 15000;
       this.socket.onError(async () => {
-        // Regenerate a new JWT for the reconnect. This can be out of sync or happen more often than needed, but it's important
-        // to try multiple times in case there's a connection issue.
+        // Regenerate a new JWT for the reconnect, but throttle to avoid storms.
+        const now = Date.now();
+        if (now - lastJwtRefreshAt < jwtRefreshCooldownMs) {
+          return;
+        }
+
+        lastJwtRefreshAt = now;
         try {
           const newJwt = await this.provideJwtCached();
           jwt = newJwt;
@@ -255,6 +264,10 @@ class Live {
           this.channel.onMessage = d => d;
           this.channel = null;
           this.pendingMessages.clear();
+          this.pendingMessageTimeouts.forEach(timeoutId =>
+            clearTimeout(timeoutId)
+          );
+          this.pendingMessageTimeouts.clear();
           this.messageIndex = 0;
 
           return resolve(resp);
@@ -328,6 +341,14 @@ class Live {
         data && data._messageId && this.pendingMessages.delete(data._messageId)
       );
 
+      if (data && data._messageId) {
+        const timeoutId = this.pendingMessageTimeouts.get(data._messageId);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          this.pendingMessageTimeouts.delete(data._messageId);
+        }
+      }
+
       if (event && (event === 'phx_reply' || event.startsWith('chan_reply_'))) {
         // No action listens to this
         return data;
@@ -348,14 +369,41 @@ class Live {
     // eslint-disable-next-line
     payload._messageId = _messageId;
     this.pendingMessages.set(_messageId, payload);
+    const timeoutId = window.setTimeout(() => {
+      this.pendingMessages.delete(_messageId);
+      this.pendingMessageTimeouts.delete(_messageId);
+    }, timeout + 1000);
+    this.pendingMessageTimeouts.set(_messageId, timeoutId);
 
     return new Promise((resolve, reject) => {
       if (this.channel) {
         this.channel
           .push(event, payload, timeout)
-          .receive('ok', resolve)
-          .receive('error', reject)
+          .receive('ok', response => {
+            const pendingTimeout = this.pendingMessageTimeouts.get(_messageId);
+            if (pendingTimeout) {
+              clearTimeout(pendingTimeout);
+              this.pendingMessageTimeouts.delete(_messageId);
+            }
+            this.pendingMessages.delete(_messageId);
+            resolve(response as any);
+          })
+          .receive('error', error => {
+            const pendingTimeout = this.pendingMessageTimeouts.get(_messageId);
+            if (pendingTimeout) {
+              clearTimeout(pendingTimeout);
+              this.pendingMessageTimeouts.delete(_messageId);
+            }
+            this.pendingMessages.delete(_messageId);
+            reject(error);
+          })
           .receive('timeout', () => {
+            const pendingTimeout = this.pendingMessageTimeouts.get(_messageId);
+            if (pendingTimeout) {
+              clearTimeout(pendingTimeout);
+              this.pendingMessageTimeouts.delete(_messageId);
+            }
+            this.pendingMessages.delete(_messageId);
             const error = new Error();
             error.name = 'live-timeout';
             error.message = `Live timeout on '${event}'`;

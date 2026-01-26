@@ -3,12 +3,11 @@ import { getAbsoluteDependency } from '@codesandbox/common/lib/utils/dependencie
 import { ILambdaResponse } from '../merge-dependency';
 
 import delay from '../../utils/delay';
-import dependenciesToQuery, {
-  normalizeVersion,
-} from '../dependencies-to-query';
+import { normalizeVersion } from '../dependencies-to-query';
 
-const RETRY_COUNT = 60;
-const MAX_RETRY_DELAY = 10_000;
+const RETRY_COUNT = 12;
+const MAX_RETRY_DELAY = 5_000;
+const MAX_RETRY_TOTAL_MS = 60_000;
 const debug = _debug('cs:sandbox:packager');
 
 // const VERSION = 2;
@@ -66,7 +65,8 @@ function callApi(url: string, method = 'GET') {
 async function requestPackager(
   url: string,
   method: string = 'GET',
-  retries: number = 0
+  retries: number = 0,
+  startedAt: number = Date.now()
 ): Promise<any> {
   // eslint-disable-next-line no-constant-condition
   debug(`Trying to call packager for ${retries} time`);
@@ -83,6 +83,12 @@ async function requestPackager(
     }
 
     // 403 status code means the bundler is still bundling
+    if (Date.now() - startedAt > MAX_RETRY_TOTAL_MS) {
+      throw new Error(
+        `Packager retry window exceeded (${MAX_RETRY_TOTAL_MS}ms) for ${url}`
+      );
+    }
+
     if (retries < RETRY_COUNT) {
       const msDelay = Math.min(
         MAX_RETRY_DELAY,
@@ -90,7 +96,7 @@ async function requestPackager(
       );
       console.warn(`Retrying package fetch in ${msDelay}ms`);
       await delay(msDelay);
-      return requestPackager(url, method, retries + 1);
+      return requestPackager(url, method, retries + 1, startedAt);
     }
 
     throw err;
@@ -118,7 +124,6 @@ export async function getDependency(
   }
 
   const normalizedVersion = normalizeVersion(version);
-  const dependencyUrl = dependenciesToQuery({ [depName]: normalizedVersion });
   // const fullUrl = `${BUCKET_URL}/v${VERSION}/packages/${depName}/${normalizedVersion}.json`;
   const fullUrl = `${BUCKET_URL}/${depName}@${normalizedVersion}`;
 
@@ -127,12 +132,12 @@ export async function getDependency(
       contents: {},
       dependency: {
         name: depName,
-        version: normalizedVersion
+        version: normalizedVersion,
       },
       dependencyDependencies: {},
       peerDependencies: {},
-      dependencyAliases: {}
-    }
+      dependencyAliases: {},
+    };
   }
 
   try {
@@ -145,7 +150,7 @@ export async function getDependency(
       console.error(errorMsg);
       throw new Error(errorMsg);
     }
-    
+
     // 以下代码仅在非私有化部署时执行（保留用于参考）
     // The dep has not been generated yet...
     // const packagerRequestUrl = `${PACKAGER_URL}/${dependencyUrl}`;
@@ -154,3 +159,10 @@ export async function getDependency(
     throw e;
   }
 }
+
+export const __private__ = {
+  requestPackager,
+  callApi,
+  RETRY_COUNT,
+  MAX_RETRY_TOTAL_MS,
+};

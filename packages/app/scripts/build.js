@@ -112,6 +112,23 @@ function printFileSizes(stats, previousSizeMap) {
   });
 }
 
+const WARNING_IGNORE_PATTERNS = [
+  /Critical dependency: the request of a dependency is an expression/i,
+  /Critical dependency: require function is used in a way in which dependencies cannot be statically extracted/i,
+  /AssetsOverSizeLimitWarning/i,
+  /EntrypointsOverSizeLimitWarning/i,
+];
+
+function filterWarnings(warnings) {
+  return (warnings || []).filter(warning => {
+    const text =
+      typeof warning === 'string'
+        ? warning
+        : `${warning.name || ''}: ${warning.message || warning}`;
+    return !WARNING_IGNORE_PATTERNS.some(pattern => pattern.test(text));
+  });
+}
+
 // Create the production build and print the deployment instructions.
 function build(previousSizeMap) {
   console.log(
@@ -133,6 +150,7 @@ function build(previousSizeMap) {
       stats.toString({
         chunks: false,
         colors: true,
+        warnings: false,
       })
     );
 
@@ -144,9 +162,19 @@ function build(previousSizeMap) {
       process.exit(1);
     }
 
-    if (stats.hasWarnings()) {
+    const filteredWarnings = filterWarnings(
+      stats.compilation && stats.compilation.warnings
+    );
+
+    if (filteredWarnings.length > 0) {
       console.warn(chalk.yellow('Build warnings:'));
-      stats.compilation.warnings.forEach(({ name, message }) => {
+      filteredWarnings.forEach(warning => {
+        if (typeof warning === 'string') {
+          console.warn(chalk.yellow(`${warning}\n`));
+          return;
+        }
+        const name = warning.name || 'Warning';
+        const message = warning.message || String(warning);
         console.warn(chalk.yellow(`${name}: ${message}\n`));
       });
     }
@@ -155,7 +183,7 @@ function build(previousSizeMap) {
 
     console.log(
       chalk.green(
-        `Built ${stats.hasWarnings() ? 'with warnings ' : ''}in ${
+        `Built ${filteredWarnings.length > 0 ? 'with warnings ' : ''}in ${
           took / 1000
         }s.`
       )

@@ -6,6 +6,11 @@ import {
 
 const debug = _debug('cs:compiler:worker-manager');
 
+const DEFAULT_MAX_WORKERS = 4;
+const MAX_WORKERS_CAP = 4;
+const DEFAULT_MAX_CONCURRENCY = 6;
+const MAX_CONCURRENCY_CAP = 8;
+
 enum WorkerStatus {
   Initializing,
   Ready,
@@ -62,15 +67,29 @@ export class WorkerManager {
   ) {
     const {
       hasFS = false,
-      preload = false,
-      maxConcurrency = 25,
-      maxWorkerCount = navigator.hardwareConcurrency,
+      maxConcurrency = DEFAULT_MAX_CONCURRENCY,
+      maxWorkerCount,
     } = options;
 
+    const hardwareConcurrency =
+      typeof navigator !== 'undefined' && navigator.hardwareConcurrency
+        ? navigator.hardwareConcurrency
+        : DEFAULT_MAX_WORKERS;
+    const requestedMaxWorkerCount =
+      maxWorkerCount == null ? hardwareConcurrency : maxWorkerCount;
+    const resolvedMaxWorkerCount = Math.min(
+      Math.max(1, requestedMaxWorkerCount),
+      MAX_WORKERS_CAP
+    );
+    const resolvedMaxConcurrency = Math.min(
+      Math.max(1, maxConcurrency),
+      MAX_CONCURRENCY_CAP
+    );
+
     this.name = name;
-    this.maxWorkerCount = maxWorkerCount;
+    this.maxWorkerCount = resolvedMaxWorkerCount;
     this.workerFactory = workerFactory;
-    this.maxConcurrency = maxConcurrency;
+    this.maxConcurrency = resolvedMaxConcurrency;
     this.hasFS = hasFS;
 
     // 优化：改为懒加载模式，只在实际需要时创建 Worker
@@ -85,7 +104,7 @@ export class WorkerManager {
       const p = this.loadWorker().catch(console.error);
       workerPromises.push(p);
     }
-    
+
     // Store the combined promise so first task can wait for all workers
     if (workerPromises.length > 0) {
       this.firstLoadPromise = Promise.all(workerPromises).then(() => {});
@@ -98,13 +117,13 @@ export class WorkerManager {
       call.reject(new Error('Worker disposed'));
     });
     this.pendingCalls = [];
-    
+
     // 🔧 清理所有活跃调用
     this.activeCalls.forEach(call => {
       call.reject(new Error('Worker disposed'));
     });
     this.activeCalls = new Map();
-    
+
     // 终止所有 Worker
     this.workers.forEach(w => w.worker.terminate());
     this.workers = new Map();

@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Responsible for consuming and syncing with the server/local cache
 import localforage from 'localforage';
 import * as memoryDriver from 'localforage-driver-memory';
@@ -19,6 +20,28 @@ localforage.setDriver([
 
 const MAX_CACHE_SIZE = 1024 * 1024 * 20;
 let APICacheUsed = false;
+let prewarmScheduled = false;
+
+const scheduleIndexedDBPrewarm = () => {
+  if (prewarmScheduled) {
+    return;
+  }
+
+  prewarmScheduled = true;
+
+  const run = () => {
+    localforage.keys().catch(() => {
+      // 忽略预热失败
+    });
+  };
+
+  if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+    (window as any).requestIdleCallback(run, { timeout: 2000 });
+    return;
+  }
+
+  setTimeout(run, 2000);
+};
 try {
   localforage.config({
     name: 'CodeSandboxApp',
@@ -28,7 +51,7 @@ try {
   });
 
   // Prewarm store
-  localforage.keys();
+  scheduleIndexedDBPrewarm();
 } catch (e) {
   console.warn('Problems initializing IndexedDB store.');
   console.warn(e);
@@ -195,7 +218,7 @@ export function ignoreNextCache() {
 // 从而减少二次构建时间
 export async function consumeCache(manager: Manager) {
   console.log('[consumeCache] manager.id:', manager.id);
-  
+
   if (!manager.id) {
     console.log('[consumeCache] ❌ No manager.id, returning false');
     return false;
@@ -219,7 +242,12 @@ export async function consumeCache(manager: Manager) {
     console.log('[consumeCache] cacheData from __SANDBOX_DATA__:', !!cacheData);
     console.log('[consumeCache] localData from IndexedDB:', !!localData);
     if (localData) {
-      console.log('[consumeCache] localData.version:', localData.version, 'manager.version:', manager.version);
+      console.log(
+        '[consumeCache] localData.version:',
+        localData.version,
+        'manager.version:',
+        manager.version
+      );
     }
 
     const cache = findCacheToUse(cacheData && cacheData.data, localData);
@@ -235,14 +263,21 @@ export async function consumeCache(manager: Manager) {
           `Loading cache from ${cache === localData ? 'IndexedDB' : 'API'}`,
           cache
         );
-        console.log('[consumeCache] ✅ Cache version matched, loading from', cache === localData ? 'IndexedDB' : 'API');
+        console.log(
+          '[consumeCache] ✅ Cache version matched, loading from',
+          cache === localData ? 'IndexedDB' : 'API'
+        );
 
         await manager.load(cache);
 
         return true;
-      } else {
-        console.log('[consumeCache] ❌ Version mismatch: cache.version=', cache.version, 'manager.version=', manager.version);
       }
+      console.log(
+        '[consumeCache] ❌ Version mismatch: cache.version=',
+        cache.version,
+        'manager.version=',
+        manager.version
+      );
     } else {
       console.log('[consumeCache] ❌ No cache found');
     }

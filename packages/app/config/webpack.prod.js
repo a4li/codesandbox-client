@@ -81,6 +81,9 @@ module.exports = merge(commonConfig, {
       },
     },
   },
+  performance: {
+    hints: false,
+  },
 
   plugins: [
     process.env.ANALYZE &&

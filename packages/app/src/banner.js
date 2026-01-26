@@ -91,50 +91,73 @@ function isStandalone() {
   return !window.opener && window.parent === window;
 }
 
+const IFRAME_ID = 'sb__phishing-banner';
+const RECREATE_DEBOUNCE_MS = 250;
 let interval;
-const createIframe = () => {
+let observer;
+let recreateTimeout;
+
+function createIframe() {
   if (!isStandalone()) {
     return;
   }
 
   if (localStorage.HIDE_PHISHING_BANNER) return;
 
+  if (!document.body) {
+    // eslint-disable-next-line no-use-before-define
+    scheduleEnsure();
+    return;
+  }
+
+  const existing = document.getElementById(IFRAME_ID);
+  if (existing) {
+    // eslint-disable-next-line no-use-before-define
+    startSelfHeal();
+    return;
+  }
+
   const iframe = document.createElement('iframe');
-
-  const iframeId = `sb__open-sandbox${Math.floor(Math.random() * 100)}`;
   iframe.setAttribute('style', iframeStyles);
-  iframe.setAttribute('id', iframeId);
-
-  clearInterval(interval);
-  interval = setInterval(() => {
-    // Check every second whether the banner is still there
-    if (!document.getElementById(iframeId)) {
-      createIframe();
-    }
-  }, 1000);
+  iframe.setAttribute('id', IFRAME_ID);
 
   iframe.srcdoc = content;
 
-  iframe.onload = () => {
-    /**
-     * Prevent others from trying to remove this banner. If it's removed we just
-     * readd it!
-     */
-    const observer = new MutationObserver(() => {
-      document.body.removeChild(iframe);
-      observer.disconnect();
-      createIframe();
-    });
-
-    observer.observe(iframe, {
-      attributes: true,
-      childList: true,
-      subtree: true,
-    });
-  };
-
   document.body.appendChild(iframe);
-};
+  // eslint-disable-next-line no-use-before-define
+  startSelfHeal();
+}
+
+function scheduleEnsure() {
+  if (recreateTimeout) {
+    return;
+  }
+
+  recreateTimeout = setTimeout(() => {
+    recreateTimeout = null;
+    createIframe();
+  }, RECREATE_DEBOUNCE_MS);
+}
+
+function startSelfHeal() {
+  if (!observer && typeof MutationObserver !== 'undefined' && document.body) {
+    observer = new MutationObserver(() => {
+      if (!document.getElementById(IFRAME_ID)) {
+        scheduleEnsure();
+      }
+    });
+
+    observer.observe(document.body, { childList: true });
+  }
+
+  if (!observer && !interval) {
+    interval = setInterval(() => {
+      if (!document.getElementById(IFRAME_ID)) {
+        createIframe();
+      }
+    }, 5000);
+  }
+}
 
 try {
   const sandboxId = document.location.host.split('.')[0];
