@@ -25,6 +25,11 @@ const ES6_LIB = {
   CONTENTS: lib_es6_dts
 };
 
+const TYPINGS_POLL_INTERVAL_MS = 30000;
+const TYPINGS_DEBOUNCE_MS = 1000;
+const MAX_FETCHED_TYPES = 500;
+const TYPINGS_FETCH_CONCURRENCY = 4;
+
 export enum Priority {
   Emmet,
   Platform
@@ -77,6 +82,9 @@ export class TypeScriptWorker implements ts.LanguageServiceHost {
   private typesLoaded: boolean = false;
   private fetchingTypes: boolean = false;
   private fetchedTypes: string[] = [];
+  private fetchedTypesIndex: Map<string, true> = new Map();
+  private lastTypingsSignature: string | null = null;
+  private typingsDebounceTimer: any = null;
 
   constructor(ctx: IWorkerContext, createData: ICreateData) {
     this._ctx = ctx;
@@ -107,11 +115,88 @@ export class TypeScriptWorker implements ts.LanguageServiceHost {
         this.syncDirectory("/sandbox");
 
         this.getTypings();
-        setInterval(() => this.getTypings(), 5000);
+        setInterval(() => this.getTypings(), TYPINGS_POLL_INTERVAL_MS);
+        this.watchTypingsChanges();
 
         // BrowserFS is initialized and ready-to-use!
       }
     );
+  }
+
+  private scheduleTypingsRefresh() {
+    if (this.typingsDebounceTimer) {
+      clearTimeout(this.typingsDebounceTimer);
+    }
+
+    this.typingsDebounceTimer = setTimeout(() => {
+      this.getTypings();
+    }, TYPINGS_DEBOUNCE_MS);
+  }
+
+  private rememberFetchedType(key: string) {
+    if (this.fetchedTypesIndex.has(key)) {
+      this.fetchedTypes = this.fetchedTypes.filter(item => item !== key);
+    }
+
+    this.fetchedTypes.push(key);
+    this.fetchedTypesIndex.set(key, true);
+
+    if (this.fetchedTypes.length > MAX_FETCHED_TYPES) {
+      const oldest = this.fetchedTypes.shift();
+      if (oldest) {
+        this.fetchedTypesIndex.delete(oldest);
+      }
+    }
+  }
+
+  private runWithConcurrency<T>(
+    items: T[],
+    limit: number,
+    handler: (item: T) => any
+  ) {
+    return new Promise(resolve => {
+      let index = 0;
+      let running = 0;
+
+      const next = () => {
+        if (index >= items.length && running === 0) {
+          resolve();
+          return;
+        }
+
+        while (running < limit && index < items.length) {
+          const item = items[index++];
+          running += 1;
+
+          Promise.as(handler(item)).then(
+            () => {
+              running -= 1;
+              next();
+            },
+            () => {
+              running -= 1;
+              next();
+            }
+          );
+        }
+      };
+
+      next();
+    });
+  }
+
+  private watchTypingsChanges() {
+    if (!this.fs || typeof this.fs.watch !== "function") {
+      return;
+    }
+
+    try {
+      this.fs.watch("/sandbox/package.json", () => {
+        this.scheduleTypingsRefresh();
+      });
+    } catch (e) {
+      // Ignore watch errors and rely on polling
+    }
   }
 
   getTypings() {
@@ -137,6 +222,7 @@ export class TypeScriptWorker implements ts.LanguageServiceHost {
 
     this.fs.readFile("/sandbox/package.json", (e, data) => {
       if (e) {
+        this.fetchingTypes = false;
         return;
       }
 
@@ -146,21 +232,40 @@ export class TypeScriptWorker implements ts.LanguageServiceHost {
         const dependencies = p.dependencies || {};
         const devDependencies = p.devDependencies || {};
 
-        Promise.join(
-          [
-            ...Object.keys(dependencies),
-            ...Object.keys(devDependencies).filter(
-              p => p.indexOf("@types/") === 0
-            )
-          ].map(depName => {
+        const dependencyNames = [
+          ...Object.keys(dependencies),
+          ...Object.keys(devDependencies).filter(
+            p => p.indexOf("@types/") === 0
+          )
+        ];
+
+        const signature = dependencyNames
+          .map(depName => {
+            const version = dependencies[depName] || devDependencies[depName];
+            return `${depName}@${version}`;
+          })
+          .sort()
+          .join("|");
+
+        if (this.typesLoaded && this.lastTypingsSignature === signature) {
+          this.fetchingTypes = false;
+          return;
+        }
+
+        this.lastTypingsSignature = signature;
+
+        this.runWithConcurrency(
+          dependencyNames,
+          TYPINGS_FETCH_CONCURRENCY,
+          depName => {
             const version = dependencies[depName] || devDependencies[depName];
 
             const key = `${depName}@${version}`;
-            if (this.fetchedTypes.indexOf(key) > -1) {
+            if (this.fetchedTypesIndex.has(key)) {
               return Promise.as(void 0);
             }
 
-            this.fetchedTypes.push(key);
+            this.rememberFetchedType(key);
 
             return fetchTypings
               .fetchAndAddDependencies(depName, version)
@@ -179,8 +284,9 @@ export class TypeScriptWorker implements ts.LanguageServiceHost {
                     });
                   }
                 });
-              }).catch(() => {})
-          })
+              })
+              .catch(() => {});
+          }
         ).then(() => {
           this._languageService.cleanupSemanticCache();
           setTimeout(() => {
@@ -188,10 +294,11 @@ export class TypeScriptWorker implements ts.LanguageServiceHost {
           });
         });
       } catch (e) {
-        return;
-      } finally {
         this.fetchingTypes = false;
+        return;
       }
+
+      this.fetchingTypes = false;
     });
   }
 

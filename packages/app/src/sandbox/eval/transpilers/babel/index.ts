@@ -6,6 +6,7 @@ import { isUrl } from '@codesandbox/common/lib/utils/is-url';
 // @ts-ignore
 import BabelWorker from 'worker-loader?publicPath=/sandbox&name=babel-transpiler.[hash:8].worker.js!./worker/index';
 
+import _debug from '@codesandbox/common/lib/utils/debug';
 import delay from '@codesandbox/common/lib/utils/delay';
 import { endMeasure, measure } from '@codesandbox/common/lib/utils/metrics';
 import { LoaderContext, Manager } from 'sandpack-core';
@@ -20,6 +21,7 @@ import replaceImportPathAliases from './replace-import-path-aliases';
 import { indexedDBCache } from './indexeddb-cache';
 
 const MAX_WORKER_ITERS = 100;
+const debug = _debug('cs:compiler:babel');
 
 interface TranspilationResult {
   transpiledCode: string;
@@ -98,7 +100,7 @@ class BabelTranspiler extends WorkerTranspiler {
   // 🚀 优化: Worker 初始化后恢复缓存
   private cacheInitialized = false;
   private cacheInitPromise: Promise<void> | null = null;
-  
+
   // 🚀 优化: 跟踪是否执行过编译，用于决定是否需要保存缓存
   private hasCompiled = false;
   private cacheSaved = false;
@@ -108,27 +110,28 @@ class BabelTranspiler extends WorkerTranspiler {
     if (this.cacheInitialized) {
       return;
     }
-    
+
     // 如果正在初始化,等待完成
     if (this.cacheInitPromise) {
-      return this.cacheInitPromise;
+      await this.cacheInitPromise;
+      return;
     }
-    
+
     this.cacheInitPromise = (async () => {
       this.cacheInitialized = true;
-      console.log('[Cache] Initializing IndexedDB cache...');
-      
+      debug('[Cache] Initializing IndexedDB cache...');
+
       // 异步恢复缓存
       try {
         await this.restorePersistedCache();
       } catch (err) {
         console.warn('[Cache] Failed to restore cache:', err);
       }
-      
+
       // 🔧 修改：不再在 beforeunload 时保存，改为在编译完成后保存
     })();
-    
-    return this.cacheInitPromise;
+
+    await this.cacheInitPromise;
   }
 
   initialize() {
@@ -143,7 +146,7 @@ class BabelTranspiler extends WorkerTranspiler {
   ): Promise<TranspilationResult> {
     // 🚀 优化: 确保缓存系统在第一次编译前初始化
     await this.ensureCacheInitialized();
-    
+
     const { path } = loaderContext;
     const isNodeModule = path.startsWith('/node_modules') || isUrl(path);
 
@@ -271,7 +274,7 @@ class BabelTranspiler extends WorkerTranspiler {
     );
 
     await addCollectedDependencies(loaderContext, foundDependencies);
-    
+
     // 🚀 优化: 标记已执行编译
     this.hasCompiled = true;
 
@@ -336,7 +339,7 @@ class BabelTranspiler extends WorkerTranspiler {
         method: 'export-cache',
         data: {},
       });
-      
+
       if (cacheData && cacheData.entries) {
         await indexedDBCache.setMany(cacheData.entries);
       }
@@ -350,9 +353,9 @@ class BabelTranspiler extends WorkerTranspiler {
     // 只有执行过编译且还未保存过缓存时才保存
     if (this.hasCompiled && !this.cacheSaved) {
       this.cacheSaved = true;
-      console.log('[Cache] Persisting cache after compilation...');
+      debug('[Cache] Persisting cache after compilation...');
       await this.exportAndPersistCache();
-      console.log('[Cache] ✅ Cache persisted to IndexedDB');
+      debug('[Cache] Cache persisted to IndexedDB');
     }
   }
 
@@ -360,12 +363,12 @@ class BabelTranspiler extends WorkerTranspiler {
   async restorePersistedCache(): Promise<void> {
     try {
       const entries = await indexedDBCache.getAll();
-      
+
       if (entries.length === 0) {
         return;
       }
-      
-      console.log(`[Cache] Restoring ${entries.length} entries to worker...`);
+
+      debug('[Cache] Restoring %d entries to worker...', entries.length);
       const result = await this.workerManager.callFn({
         method: 'import-cache',
         data: { entries },
@@ -402,16 +405,30 @@ const transpiler = new BabelTranspiler();
 // 🚀 优化: 将缓存统计方法暴露到全局(用于调试)
 // 使用 setTimeout 确保在模块加载后执行
 if (typeof window !== 'undefined') {
-  setTimeout(() => {
-    (window as any).__babelCache = {
-      getStats: () => transpiler.getCacheStats(),
-      printStats: () => transpiler.printCacheStats(),
-      clear: () => transpiler.clearCompilationCache(),
-    };
-    
-    // 输出提示
-    console.log('[Babel Cache] API available at window.__babelCache');
-  }, 0);
+  const isDev = process.env.NODE_ENV === 'development';
+
+  if (!isDev) {
+    delete (window as any).__babelCache;
+    if ((window as any).__cleanupBabelDebugApis) {
+      (window as any).__cleanupBabelDebugApis();
+    }
+  } else {
+    setTimeout(() => {
+      (window as any).__babelCache = {
+        getStats: () => transpiler.getCacheStats(),
+        printStats: () => transpiler.printCacheStats(),
+        clear: () => transpiler.clearCompilationCache(),
+      };
+
+      (window as any).__cleanupBabelDebugApis = () => {
+        delete (window as any).__babelCache;
+        delete (window as any).__cleanupBabelDebugApis;
+      };
+
+      // 输出提示
+      debug('[Babel Cache] API available at window.__babelCache');
+    }, 0);
+  }
 }
 
 export { BabelTranspiler };

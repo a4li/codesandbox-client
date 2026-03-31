@@ -209,28 +209,49 @@ class MonacoEditor extends React.Component<Props, State> implements Editor {
     monaco.languages.typescript.typescriptDefaults.setEagerModelSync(true);
     monaco.languages.typescript.javascriptDefaults.setEagerModelSync(true);
 
-    // 🔍 性能监控：记录 TypeScript Worker 调用次数
-    if (typeof window !== 'undefined' && !window.__tsWorkerCallCount) {
-      window.__tsWorkerCallCount = 0;
-      window.__jsWorkerCallCount = 0;
-      
-      // 拦截 TypeScript Worker 调用
-      const originalTSWorker = monaco.languages.typescript.getTypeScriptWorker;
-      monaco.languages.typescript.getTypeScriptWorker = function() {
-        window.__tsWorkerCallCount++;
-        console.log(`🔧 TS Worker 调用次数: ${window.__tsWorkerCallCount}`);
-        return originalTSWorker.apply(this, arguments);
-      };
-      
-      // 拦截 JavaScript Worker 调用
-      const originalJSWorker = monaco.languages.typescript.getJavaScriptWorker;
-      monaco.languages.typescript.getJavaScriptWorker = function() {
-        window.__jsWorkerCallCount++;
-        console.log(`🔧 JS Worker 调用次数: ${window.__jsWorkerCallCount}`);
-        return originalJSWorker.apply(this, arguments);
-      };
-      
-      console.log('✅ TypeScript Worker 监控已启用');
+    // 🔍 性能监控：记录 TypeScript Worker 调用次数（仅开发环境）
+    if (typeof window !== 'undefined') {
+      const isDev = process.env.NODE_ENV === 'development';
+
+      if (isDev && !window.__tsWorkerCallCount) {
+        window.__tsWorkerCallCount = 0;
+        window.__jsWorkerCallCount = 0;
+
+        const originalTSWorker =
+          monaco.languages.typescript.getTypeScriptWorker;
+        const originalJSWorker =
+          monaco.languages.typescript.getJavaScriptWorker;
+
+        // 拦截 TypeScript Worker 调用
+        monaco.languages.typescript.getTypeScriptWorker = function trackTypeScriptWorker(
+          ...workerArgs
+        ) {
+          window.__tsWorkerCallCount++;
+          return originalTSWorker.apply(this, workerArgs);
+        };
+
+        // 拦截 JavaScript Worker 调用
+        monaco.languages.typescript.getJavaScriptWorker = function trackJavaScriptWorker(
+          ...workerArgs
+        ) {
+          window.__jsWorkerCallCount++;
+          return originalJSWorker.apply(this, workerArgs);
+        };
+
+        window.__cleanupMonacoDebugApis = () => {
+          monaco.languages.typescript.getTypeScriptWorker = originalTSWorker;
+          monaco.languages.typescript.getJavaScriptWorker = originalJSWorker;
+          delete window.__tsWorkerCallCount;
+          delete window.__jsWorkerCallCount;
+          delete window.__cleanupMonacoDebugApis;
+        };
+      } else if (!isDev) {
+        delete window.__tsWorkerCallCount;
+        delete window.__jsWorkerCallCount;
+        if (window.__cleanupMonacoDebugApis) {
+          window.__cleanupMonacoDebugApis();
+        }
+      }
     }
 
     this.setCompilerOptions();
@@ -399,13 +420,13 @@ class MonacoEditor extends React.Component<Props, State> implements Editor {
     // 从 44,481 次/加载 降低到 < 5,000 次/加载
     // 内存节省：150-250MB per Worker
     this.monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-      noSemanticValidation: true,   // 禁用语义检查（类型推导、类型兼容性）
-      noSyntaxValidation: false,     // 保留语法检查（基本语法错误）
+      noSemanticValidation: true, // 禁用语义检查（类型推导、类型兼容性）
+      noSyntaxValidation: false, // 保留语法检查（基本语法错误）
     });
 
     this.monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
-      noSemanticValidation: true,   // JavaScript 也禁用语义检查
-      noSyntaxValidation: false,     // 保留语法检查
+      noSemanticValidation: true, // JavaScript 也禁用语义检查
+      noSyntaxValidation: false, // 保留语法检查
     });
   };
 
@@ -1160,8 +1181,8 @@ class MonacoEditor extends React.Component<Props, State> implements Editor {
       // 🚀 性能优化：保持禁用语义检查的配置
       this.monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions(
         {
-          noSemanticValidation: true,   // 始终禁用语义检查
-          noSyntaxValidation: false,     // 保留语法检查
+          noSemanticValidation: true, // 始终禁用语义检查
+          noSyntaxValidation: false, // 保留语法检查
         }
       );
       this.typingsFetcherWorker.postMessage({ dependencies });
@@ -1229,8 +1250,8 @@ class MonacoEditor extends React.Component<Props, State> implements Editor {
 
     // 🚀 性能优化：与初始化保持一致，禁用语义检查
     this.monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-      noSemanticValidation: true,   // 禁用语义检查
-      noSyntaxValidation: false,     // 保留语法检查
+      noSemanticValidation: true, // 禁用语义检查
+      noSyntaxValidation: false, // 保留语法检查
     });
   };
 

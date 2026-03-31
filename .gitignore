@@ -13,6 +13,7 @@ coverage
 # production
 build
 www
+www.zip
 .deliver
 lib/
 dist/
